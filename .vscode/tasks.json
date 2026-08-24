@@ -2,9 +2,9 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "🚀 Start PackSure AI (Full Stack)",
+      "label": "⚡ Start PackSure AI (Single File App)",
       "type": "shell",
-      "command": "py run_all.py",
+      "command": "py packsure_app.py",
       "group": {
         "kind": "build",
         "isDefault": true
@@ -16,37 +16,12 @@
       "problemMatcher": []
     },
     {
-      "label": "🐍 Start Backend (FastAPI)",
+      "label": "🚀 Start PackSure AI (Full Stack Dual Process)",
       "type": "shell",
-      "command": "py run.py",
-      "options": {
-        "cwd": "${workspaceFolder}/backend"
-      },
+      "command": "py run_all.py",
       "presentation": {
         "reveal": "always",
         "panel": "new"
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "⚡ Start Frontend (Vite Dev)",
-      "type": "shell",
-      "command": "cmd /c npm run dev",
-      "options": {
-        "cwd": "${workspaceFolder}/frontend"
-      },
-      "presentation": {
-        "reveal": "always",
-        "panel": "new"
-      },
-      "problemMatcher": []
-    },
-    {
-      "label": "🔨 Build Frontend",
-      "type": "shell",
-      "command": "cmd /c npm run build",
-      "options": {
-        "cwd": "${workspaceFolder}/frontend"
       },
       "problemMatcher": []
     }

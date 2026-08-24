@@ -2,7 +2,14 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "🚀 Run PackSure AI (Full Stack)",
+      "name": "⚡ Run PackSure AI (Single File App)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/packsure_app.py",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "🚀 Run PackSure AI (Full Stack Dual Process)",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/run_all.py",
@@ -15,13 +22,6 @@
       "program": "${workspaceFolder}/backend/run.py",
       "cwd": "${workspaceFolder}/backend",
       "console": "integratedTerminal"
-    },
-    {
-      "name": "🌐 Launch Frontend in Chrome",
-      "type": "chrome",
-      "request": "launch",
-      "url": "http://localhost:5173",
-      "webRoot": "${workspaceFolder}/frontend"
     }
   ]
 }
