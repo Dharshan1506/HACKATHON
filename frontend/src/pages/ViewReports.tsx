@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { 
-  FileText, Search, Download, X, Scale, Eye
+  FileText, Search, Download, X, Scale, Eye, RefreshCw
 } from 'lucide-react';
 import { fetchReports, fetchReportDetail, getPdfDownloadUrl } from '../services/api';
-import type { ComplianceReport } from '../types';
+import type { ComplianceReport, MandatoryRuleCheck } from '../types';
 
 interface ViewReportsProps {
   initialSelectedId?: number | null;
@@ -20,7 +20,7 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
     setLoading(true);
     try {
       const res = await fetchReports(statusFilter === 'ALL' ? undefined : statusFilter, searchQuery);
-      setReports(res.reports);
+      setReports(res.reports || []);
       
       if (initialSelectedId && !selectedReport) {
         const detail = await fetchReportDetail(initialSelectedId);
@@ -46,12 +46,14 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
     }
   };
 
+  const modalRuleChecks: MandatoryRuleCheck[] = selectedReport?.details?.rule_checks || [];
+
   return (
-    <div className="space-y-8 pb-12">
+    <div className="space-y-8 pb-16">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-card p-8 rounded-2xl border border-slate-800">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 glass-card p-8 rounded-3xl border border-slate-800">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold mb-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 text-xs font-semibold mb-2 border border-emerald-500/20">
             <FileText className="w-3.5 h-3.5" />
             <span>Audit Repository</span>
           </div>
@@ -62,12 +64,12 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
         </div>
 
         {/* Status Tabs */}
-        <div className="flex items-center gap-1.5 bg-slate-900/80 p-1.5 rounded-xl border border-slate-800 self-start md:self-auto">
+        <div className="flex items-center gap-1.5 bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800 self-start md:self-auto">
           {['ALL', 'PASS', 'WARNING', 'FAIL'].map((st) => (
             <button
               key={st}
               onClick={() => setStatusFilter(st)}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
                 statusFilter === st
                   ? 'bg-slate-800 text-cyan-400 border border-cyan-500/30 shadow-sm'
                   : 'text-slate-400 hover:text-white'
@@ -79,41 +81,53 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
         </div>
       </div>
 
-      {/* Search Input */}
-      <div className="relative">
-        <Search className="w-5 h-5 text-slate-500 absolute left-4 top-1/2 -translate-y-1/2" />
-        <input
-          type="text"
-          placeholder="Search by product name, brand, or report code (e.g. PSR-8F21)..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full pl-12 pr-4 py-3.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm placeholder-slate-500 focus:outline-none focus:border-cyan-500"
-        />
+      {/* Search Input & Refresh */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1">
+          <Search className="w-5 h-5 text-slate-500 absolute left-4 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            placeholder="Search by product name, brand, or report code (e.g. PSR-8F21)..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-12 pr-4 py-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-slate-100 text-sm placeholder-slate-500 focus:outline-none focus:border-cyan-500 transition-colors"
+          />
+        </div>
+        <button
+          onClick={loadReports}
+          className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:border-slate-700 transition-colors"
+          title="Refresh Reports"
+        >
+          <RefreshCw className="w-5 h-5" />
+        </button>
       </div>
 
-      {/* Reports Grid / Table */}
+      {/* Reports Grid */}
       {loading ? (
-        <div className="glass-card p-12 text-center text-slate-400 text-sm">
-          Loading compliance reports...
+        <div className="glass-card p-12 text-center text-slate-400 text-sm rounded-3xl">
+          <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-cyan-400" />
+          <span>Loading compliance reports...</span>
         </div>
       ) : reports.length === 0 ? (
-        <div className="glass-card p-12 text-center text-slate-400 space-y-2">
+        <div className="glass-card p-12 text-center text-slate-400 space-y-2 rounded-3xl">
           <FileText className="w-10 h-10 text-slate-600 mx-auto" />
           <p className="font-semibold text-white">No compliance reports found</p>
           <p className="text-xs">Try adjusting your search filter or scan a new product.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
           {reports.map((rep) => (
             <div
               key={rep.id}
               onClick={() => handleOpenDetail(rep.id)}
-              className="glass-card p-6 rounded-2xl border border-slate-800 hover:border-slate-700 cursor-pointer transition-all hover:bg-slate-850 space-y-4"
+              className="glass-card p-6 rounded-3xl border border-slate-800 hover:border-slate-700 cursor-pointer transition-all hover:bg-slate-850/80 space-y-4 shadow-lg hover:-translate-y-0.5"
             >
               <div className="flex items-start justify-between">
                 <div>
-                  <span className="text-xs font-mono font-bold text-cyan-400">{rep.report_code}</span>
-                  <h3 className="font-bold text-white text-lg mt-0.5">{rep.product_name}</h3>
+                  <span className="text-xs font-mono font-bold text-cyan-400 px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">
+                    {rep.report_code}
+                  </span>
+                  <h3 className="font-bold text-white text-lg mt-1">{rep.product_name}</h3>
                   <span className="text-xs text-slate-400">{rep.category}</span>
                 </div>
                 <div className="text-right">
@@ -126,18 +140,18 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
                 </div>
               </div>
 
-              <p className="text-slate-300 text-xs leading-relaxed line-clamp-2 bg-slate-950/60 p-3 rounded-lg border border-slate-850">
+              <p className="text-slate-300 text-xs leading-relaxed line-clamp-2 bg-slate-950/60 p-3 rounded-xl border border-slate-850">
                 {rep.summary}
               </p>
 
-              <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-800/80">
-                <div className="flex items-center gap-3 text-slate-400">
-                  <span className="text-emerald-400 font-medium">✓ {rep.passed_count} Passed</span>
-                  <span className="text-rose-400 font-medium">✗ {rep.violations_count} Failures</span>
+              <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-800/80">
+                <div className="flex items-center gap-3 text-slate-400 font-medium">
+                  <span className="text-emerald-400">✓ {rep.passed_count} Passed</span>
+                  <span className="text-rose-400">✗ {rep.violations_count} Failures</span>
                 </div>
                 <span className="text-cyan-400 font-semibold flex items-center gap-1 hover:underline">
                   <Eye className="w-3.5 h-3.5" />
-                  <span>Inspect Audit</span>
+                  <span>Inspect Audit Details →</span>
                 </span>
               </div>
             </div>
@@ -153,14 +167,14 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
             <div className="flex items-start justify-between border-b border-slate-800 pb-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-mono font-bold text-cyan-400 px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">
+                  <span className="text-xs font-mono font-bold text-cyan-400 px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/20">
                     {selectedReport.report_code}
                   </span>
                   <span className={`badge-${selectedReport.compliance_status.toLowerCase()}`}>
                     {selectedReport.compliance_status} ({selectedReport.compliance_score}%)
                   </span>
                 </div>
-                <h2 className="text-2xl font-black text-white mt-1">{selectedReport.product_name}</h2>
+                <h2 className="text-2xl font-black text-white mt-1.5">{selectedReport.product_name}</h2>
                 <p className="text-xs text-slate-400 mt-0.5">Category: {selectedReport.category}</p>
               </div>
 
@@ -173,7 +187,7 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
             </div>
 
             {/* Summary */}
-            <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+            <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Executive Audit Summary</h4>
               <p className="text-sm text-slate-200 leading-relaxed">{selectedReport.summary}</p>
             </div>
@@ -186,8 +200,8 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
               </h3>
 
               <div className="space-y-3">
-                {selectedReport.details?.rule_checks?.map((check) => (
-                  <div key={check.rule_id} className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
+                {modalRuleChecks.map((check) => (
+                  <div key={check.rule_id} className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-2">
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-mono font-bold text-cyan-400 px-2 py-0.5 rounded bg-cyan-500/10">
@@ -202,8 +216,8 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
 
                     <div className="text-xs text-slate-400 italic">{check.clause}</div>
 
-                    <div className="text-xs font-mono bg-slate-950 p-2.5 rounded border border-slate-850 text-slate-200">
-                      Declared Value: {check.value ? <span className="text-emerald-400">{check.value}</span> : <span className="text-rose-400 italic">Not Declared</span>}
+                    <div className="text-xs font-mono bg-slate-950 p-2.5 rounded-xl border border-slate-850 text-slate-200">
+                      Declared Value: {check.value ? <span className="text-emerald-400 font-semibold">{check.value}</span> : <span className="text-rose-400 italic font-semibold">Not Declared / Missing</span>}
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-xs">
@@ -227,7 +241,7 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
                 href={getPdfDownloadUrl(selectedReport.id)}
                 target="_blank"
                 rel="noreferrer"
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-xs shadow-lg shadow-emerald-500/20"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all"
               >
                 <Download className="w-4 h-4" />
                 <span>Download Official PDF Certificate</span>
