@@ -10,8 +10,21 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Global PaddleOCR reader cache
+_paddleocr_reader = None
 # Global EasyOCR reader cache
 _easyocr_reader = None
+
+def get_paddleocr_reader():
+    global _paddleocr_reader
+    if _paddleocr_reader is None:
+        try:
+            from paddleocr import PaddleOCR
+            _paddleocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, show_log=False)
+        except Exception as e:
+            logger.warning(f"PaddleOCR not available: {e}")
+            _paddleocr_reader = False
+    return _paddleocr_reader if _paddleocr_reader is not False else None
 
 def get_easyocr_reader():
     global _easyocr_reader
@@ -27,7 +40,7 @@ def get_easyocr_reader():
 
 class OCREngine:
     """
-    Real Deep Learning OCR Engine for Packaged Commodities.
+    Real Deep Learning OCR Engine for Packaged Commodities using PaddleOCR as primary.
     Extracts authentic text, computes bounding boxes, and parses Legal Metrology declarations.
     """
 
@@ -41,11 +54,36 @@ class OCREngine:
             except Exception:
                 pass
 
-        # 1. Extract Real Text and Tokens via EasyOCR / PyTesseract / Image Analysis
-        raw_text, detected_boxes = cls._extract_real_text_and_boxes(image_path, width, height)
+        # 1. OpenCV Preprocessing
+        preprocessed_path = image_path
+        if os.path.exists(image_path):
+            try:
+                cv_img = cv2.imread(image_path)
+                if cv_img is not None:
+                    # Grayscale conversion
+                    gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+                    # Adaptive thresholding to handle uneven packaging lighting and shadows
+                    thresh = cv2.adaptiveThreshold(
+                        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                        cv2.THRESH_BINARY, 11, 2
+                    )
+                    preprocessed_path = image_path.replace(".", "_preprocessed.")
+                    cv2.imwrite(preprocessed_path, thresh)
+            except Exception as e:
+                logger.warning(f"OpenCV preprocessing error: {e}")
 
-        # 2. Parse Legal Metrology Declarations from Real Extracted Text
+        # 2. Extract Real Text and Tokens via PaddleOCR / EasyOCR / PyTesseract
+        raw_text, detected_boxes = cls._extract_real_text_and_boxes(preprocessed_path, image_path, width, height)
+
+        # 3. Parse Legal Metrology Declarations from Real Extracted Text
         fields, mapped_boxes = cls._parse_legal_metrology_fields(raw_text, detected_boxes, width, height)
+
+        # Clean up temp preprocessed image
+        if preprocessed_path != image_path and os.path.exists(preprocessed_path):
+            try:
+                os.remove(preprocessed_path)
+            except Exception:
+                pass
 
         return {
             "image_dimensions": {"width": width, "height": height},
@@ -55,20 +93,50 @@ class OCREngine:
         }
 
     @classmethod
-    def _extract_real_text_and_boxes(cls, image_path: str, width: int, height: int) -> Tuple[str, List[Dict[str, Any]]]:
+    def _extract_real_text_and_boxes(cls, preprocessed_path: str, original_path: str, width: int, height: int) -> Tuple[str, List[Dict[str, Any]]]:
         raw_lines = []
         detected_boxes = []
 
-        # Try EasyOCR
-        reader = get_easyocr_reader()
-        if reader and os.path.exists(image_path):
+        # Try PaddleOCR
+        paddle_reader = get_paddleocr_reader()
+        if paddle_reader and os.path.exists(preprocessed_path):
             try:
-                results = reader.readtext(image_path)
+                results = paddle_reader.ocr(preprocessed_path, cls=True)
+                if results and len(results) > 0:
+                    page = results[0]
+                    # PaddleOCR 3.7.0 returns a dictionary with 'rec_texts', 'rec_scores', 'rec_boxes'
+                    rec_texts = page.get("rec_texts", [])
+                    rec_scores = page.get("rec_scores", [])
+                    rec_boxes = page.get("rec_boxes", [])
+                    
+                    for text, score, box in zip(rec_texts, rec_scores, rec_boxes):
+                        text_clean = text.strip()
+                        if text_clean:
+                            raw_lines.append(text_clean)
+                            # box is [xmin, ymin, xmax, ymax]
+                            min_x, min_y, max_x, max_y = box
+                            w = max_x - min_x
+                            h = max_y - min_y
+                            detected_boxes.append({
+                                "text": text_clean,
+                                "box": [int(min_x), int(min_y), int(w), int(h)],
+                                "confidence": float(score)
+                            })
+                    if raw_lines:
+                        return "\n".join(raw_lines), detected_boxes
+            except Exception as e:
+                logger.warning(f"PaddleOCR extraction error: {e}")
+
+        # Fallback to EasyOCR
+        reader = get_easyocr_reader()
+        path_to_scan = original_path if os.path.exists(original_path) else preprocessed_path
+        if reader and os.path.exists(path_to_scan):
+            try:
+                results = reader.readtext(path_to_scan)
                 for bbox, text, confidence in results:
                     text_clean = text.strip()
                     if text_clean:
                         raw_lines.append(text_clean)
-                        # bbox format: [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
                         xs = [pt[0] for pt in bbox]
                         ys = [pt[1] for pt in bbox]
                         min_x, max_x = int(min(xs)), int(max(xs))
@@ -83,7 +151,7 @@ class OCREngine:
             except Exception as e:
                 logger.warning(f"EasyOCR extraction error: {e}")
 
-        # Try PyTesseract as fallback
+        # Fallback to PyTesseract as final fallback
         try:
             import pytesseract
             tess_paths = [
@@ -96,8 +164,8 @@ class OCREngine:
                     pytesseract.pytesseract.tesseract_cmd = p
                     break
 
-            if os.path.exists(image_path):
-                img = Image.open(image_path)
+            if os.path.exists(path_to_scan):
+                img = Image.open(path_to_scan)
                 data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
                 n_boxes = len(data['text'])
                 for i in range(n_boxes):
@@ -114,27 +182,6 @@ class OCREngine:
                     return full_text, detected_boxes
         except Exception as e:
             logger.warning(f"PyTesseract extraction error: {e}")
-
-        # Fallback to OpenCV Contour / Layout Text Region Analysis
-        if os.path.exists(image_path):
-            try:
-                cv_img = cv2.imread(image_path)
-                if cv_img is not None:
-                    gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
-                    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-                    thresh = cv2.adaptiveThreshold(blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 2)
-                    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
-                    for c in contours:
-                        x, y, w, h = cv2.boundingRect(c)
-                        if w > 20 and h > 10 and w < width * 0.95:
-                            detected_boxes.append({
-                                "text": "Text Segment",
-                                "box": [int(x), int(y), int(w), int(h)],
-                                "confidence": 0.85
-                            })
-            except Exception as e:
-                logger.warning(f"OpenCV layout error: {e}")
 
         return "\n".join(raw_lines) if raw_lines else "No text extracted.", detected_boxes
 

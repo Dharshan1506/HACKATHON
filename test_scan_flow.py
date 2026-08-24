@@ -32,24 +32,43 @@ def create_sample_packaging_image(filename="test_label.png"):
     print(f"Created test label image: {filename}")
     return filename
 
-def test_api_upload(filename):
+def test_ocr_api(filename):
+    url = "http://localhost:8000/api/ocr"
+    print("\n--- Testing Dedicated OCR API ---")
+    with open(filename, "rb") as f:
+        files = {"file": (filename, f, "image/png")}
+        response = httpx.post(url, files=files, timeout=45.0)
+        
+    print("OCR API Response Status Code:", response.status_code)
+    result = response.json()
+    print("Image dimensions:", result.get("image_dimensions"))
+    print("Raw text snippet:\n", result.get("raw_text")[:200])
+    
+    bounding_boxes = result.get("bounding_boxes", [])
+    print(f"Detected segments: {len(bounding_boxes)}")
+    if bounding_boxes:
+        first = bounding_boxes[0]
+        print(f"Sample Segment: Text='{first.get('text')}', Box={first.get('box')}, Conf={first.get('confidence')}")
+
+def test_scan_api(filename):
     url = "http://localhost:8000/api/scan"
+    print("\n--- Testing Main Compliance Scan API ---")
     with open(filename, "rb") as f:
         files = {"file": (filename, f, "image/png")}
         data = {"category": "Packaged Food"}
-        response = httpx.post(url, files=files, data=data, timeout=30.0)
+        response = httpx.post(url, files=files, data=data, timeout=45.0)
         
-    print("\nAPI Response Status Code:", response.status_code)
+    print("Scan API Response Status Code:", response.status_code)
     result = response.json()
     print("Report Code:", result.get("report_code"))
     print("Product Name:", result.get("product_name"))
     print("Compliance Score:", result.get("compliance_score"), "%")
     print("Compliance Status:", result.get("compliance_status"))
-    print("Rule Checks Count:", len(result.get("extracted_data", {}).get("rule_checks", [])))
-    print("\nRule Breakdown:")
-    for r in result.get("extracted_data", {}).get("rule_checks", []):
-        print(f"  [{r['status']}] {r['rule_code']} ({r['title']}) -> Value: {r.get('value')} | Score: {r.get('score_earned')}")
+    print("Rule Checks Count:", len(result.get("details", {}).get("rule_checks", [])))
 
 if __name__ == "__main__":
     img_path = create_sample_packaging_image()
-    test_api_upload(img_path)
+    # Test OCR Endpoint first
+    test_ocr_api(img_path)
+    # Test Scan Endpoint second
+    test_scan_api(img_path)

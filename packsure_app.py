@@ -22,8 +22,10 @@ import logging
 from typing import Optional, List, Dict, Any, Tuple
 from contextlib import asynccontextmanager
 
-# Configure OpenMP and stdout encoding for Windows
+# Configure OpenMP, MKLDNN, and stdout encoding for Windows
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["FLAGS_use_mkldnn"] = "0"
+os.environ["PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT"] = "0"
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -268,7 +270,18 @@ class LegalMetrologyRulesEngine:
 # -----------------------------------------------------------------------------
 # Real OCR Engine (EasyOCR + PyTesseract + Layout)
 # -----------------------------------------------------------------------------
+_paddleocr_reader = None
 _easyocr_reader = None
+
+def get_paddle_reader():
+    global _paddleocr_reader
+    if _paddleocr_reader is None:
+        try:
+            from paddleocr import PaddleOCR
+            _paddleocr_reader = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False, show_log=False)
+        except Exception:
+            _paddleocr_reader = False
+    return _paddleocr_reader if _paddleocr_reader is not False else None
 
 def get_reader():
     global _easyocr_reader
@@ -290,31 +303,102 @@ class OCREngine:
         except Exception:
             pass
 
+        # OpenCV Preprocessing
+        preprocessed_path = image_path
+        try:
+            cv_img = cv2.imread(image_path)
+            if cv_img is not None:
+                gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+                thresh = cv2.adaptiveThreshold(
+                    gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+                    cv2.THRESH_BINARY, 11, 2
+                )
+                preprocessed_path = image_path.replace(".", "_preprocessed.")
+                cv2.imwrite(preprocessed_path, thresh)
+        except Exception:
+            pass
+
         raw_lines = []
-        reader = get_reader()
-        if reader and os.path.exists(image_path):
+        detected_boxes = []
+
+        # Try PaddleOCR
+        paddle_reader = get_paddle_reader()
+        if paddle_reader and os.path.exists(preprocessed_path):
             try:
-                results = reader.readtext(image_path)
-                for bbox, text, conf in results:
-                    t = text.strip()
-                    if t:
-                        raw_lines.append(t)
-            except Exception as e:
-                logger.warning(f"EasyOCR read error: {e}")
+                results = paddle_reader.ocr(preprocessed_path, cls=True)
+                if results and len(results) > 0:
+                    page = results[0]
+                    rec_texts = page.get("rec_texts", [])
+                    rec_scores = page.get("rec_scores", [])
+                    rec_boxes = page.get("rec_boxes", [])
+                    
+                    for text, score, box in zip(rec_texts, rec_scores, rec_boxes):
+                        t = text.strip()
+                        if t:
+                            raw_lines.append(t)
+                            min_x, min_y, max_x, max_y = box
+                            w = max_x - min_x
+                            h = max_y - min_y
+                            detected_boxes.append({
+                                "text": t,
+                                "box": [int(min_x), int(min_y), int(w), int(h)],
+                                "confidence": float(score)
+                            })
+            except Exception:
+                pass
+
+        # Try EasyOCR
+        if not raw_lines:
+            reader = get_reader()
+            path_to_scan = image_path if os.path.exists(image_path) else preprocessed_path
+            if reader and os.path.exists(path_to_scan):
+                try:
+                    results = reader.readtext(path_to_scan)
+                    for bbox, text, conf in results:
+                        t = text.strip()
+                        if t:
+                            raw_lines.append(t)
+                            xs = [pt[0] for pt in bbox]
+                            ys = [pt[1] for pt in bbox]
+                            min_x, max_x = int(min(xs)), int(max(xs))
+                            min_y, max_y = int(min(ys)), int(max(ys))
+                            detected_boxes.append({
+                                "text": t,
+                                "box": [min_x, min_y, max_x - min_x, max_y - min_y],
+                                "confidence": float(conf)
+                            })
+                except Exception:
+                    pass
 
         # Fallback to pytesseract
         if not raw_lines:
             try:
                 import pytesseract
-                full = pytesseract.image_to_string(Image.open(image_path)).strip()
-                if full:
-                    raw_lines = [l.strip() for l in full.split("\n") if l.strip()]
+                path_to_scan = image_path if os.path.exists(image_path) else preprocessed_path
+                data = pytesseract.image_to_data(Image.open(path_to_scan), output_type=pytesseract.Output.DICT)
+                n_boxes = len(data['text'])
+                for i in range(n_boxes):
+                    t = data['text'][i].strip()
+                    if t:
+                        raw_lines.append(t)
+                        detected_boxes.append({
+                            "text": t,
+                            "box": [data['left'][i], data['top'][i], data['width'][i], data['height'][i]],
+                            "confidence": float(data['conf'][i]) / 100.0
+                        })
+            except Exception:
+                pass
+
+        # Cleanup preprocessed image
+        if preprocessed_path != image_path and os.path.exists(preprocessed_path):
+            try:
+                os.remove(preprocessed_path)
             except Exception:
                 pass
 
         raw_text = "\n".join(raw_lines) if raw_lines else "No text detected."
         fields = cls._parse_fields(raw_text, raw_lines)
-        return {"raw_text": raw_text, "fields": fields, "image_dimensions": {"width": width, "height": height}}
+        return {"raw_text": raw_text, "fields": fields, "image_dimensions": {"width": width, "height": height}, "bounding_boxes": detected_boxes}
 
     @classmethod
     def _parse_fields(cls, raw_text: str, lines: List[str]) -> Dict[str, str]:
@@ -420,11 +504,31 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 # -----------------------------------------------------------------------------
 @app.get("/api/health")
 async def health():
-    return {"status": "online", "engine": "EasyOCR + Legal Metrology Rules 2011", "version": "1.0.0"}
+    return {"status": "online", "engine": "PaddleOCR + Legal Metrology Rules 2011", "version": "1.0.0"}
 
 @app.get("/api/compliance/rules")
 async def get_rules():
     return {"rules": LegalMetrologyRulesEngine.MANDATORY_RULES}
+
+@app.post("/api/ocr")
+async def run_dedicated_ocr(file: UploadFile = File(...)):
+    ext = os.path.splitext(file.filename)[1] or ".jpg"
+    unique_fn = f"ocr_{uuid.uuid4().hex[:8]}{ext}"
+    saved_path = os.path.join(UPLOAD_DIR, unique_fn)
+    
+    with open(saved_path, "wb") as f:
+        f.write(await file.read())
+
+    try:
+        ocr_result = await OCREngine.process_image(saved_path)
+    finally:
+        if os.path.exists(saved_path):
+            try:
+                os.remove(saved_path)
+            except Exception:
+                pass
+
+    return ocr_result
 
 @app.post("/api/scan")
 async def scan(
@@ -712,11 +816,22 @@ async def index_ui():
                 </div>
               </div>
               <p id="res-summary" class="text-xs text-slate-300 bg-slate-900/80 p-3 rounded-xl border border-slate-850 leading-relaxed"></p>
-              <div class="flex justify-between items-center pt-2">
+              <div class="flex justify-between items-center pt-2 border-b border-slate-800 pb-3 mb-2">
                 <span id="res-counts" class="text-xs font-semibold text-slate-400"></span>
                 <a id="res-pdf-link" target="_blank" class="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold hover:bg-emerald-500/20">
                   <i data-lucide="download" class="w-3.5 h-3.5 inline-block mr-1"></i> Download PDF
                 </a>
+              </div>
+              <div class="space-y-2">
+                <button onclick="toggleRawOcr()" class="text-xs text-cyan-400 hover:underline font-bold flex items-center gap-1">
+                  <i data-lucide="eye" class="w-3.5 h-3.5"></i> <span id="ocr-toggle-text">Show Detected Bounding Boxes & Confidence</span>
+                </button>
+                <div id="ocr-details-box" class="hidden p-3 rounded-xl bg-slate-950 border border-slate-850 text-xs space-y-3">
+                  <div class="font-mono text-slate-400 text-[10px]">Raw OCR Stream:</div>
+                  <pre id="raw-ocr-stream" class="whitespace-pre-wrap max-h-32 overflow-y-auto text-cyan-400 font-mono text-[10px] bg-slate-900 p-2 rounded-lg"></pre>
+                  <div class="font-mono text-slate-400 text-[10px]">OCR Text Segments & Confidence:</div>
+                  <div id="ocr-segments-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto"></div>
+                </div>
               </div>
             </div>
 
@@ -827,6 +942,35 @@ async def index_ui():
         document.getElementById('res-counts').innerText = 'Passed: ' + data.passed_count + ' | Warnings: ' + data.warnings_count + ' | Failures: ' + data.violations_count;
         document.getElementById('res-pdf-link').href = '/api/reports/' + data.id + '/pdf';
 
+        // Populate OCR details
+        document.getElementById('raw-ocr-stream').innerText = data.details?.raw_text || 'No text detected.';
+        const segmentsList = document.getElementById('ocr-segments-list');
+        segmentsList.innerHTML = '';
+        const boxes = data.details?.bounding_boxes || [];
+        if (boxes.length === 0) {
+          segmentsList.innerHTML = '<p class="col-span-2 text-slate-500 italic text-[11px]">No bounding boxes recorded.</p>';
+        } else {
+          boxes.forEach(boxItem => {
+            const confidencePercent = Math.round((boxItem.confidence || 0.85) * 100);
+            const badgeClass = boxItem.confidence >= 0.85 
+              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+              : boxItem.confidence >= 0.7 
+                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' 
+                : 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
+
+            const seg = document.createElement('div');
+            seg.className = 'p-2 rounded-lg bg-slate-900 border border-slate-850 flex items-center justify-between text-[11px]';
+            seg.innerHTML = `
+              <div class="truncate pr-2">
+                <div class="text-slate-200 font-semibold truncate">${boxItem.text}</div>
+                <div class="text-[9px] text-slate-500 font-mono">Box: [${boxItem.box ? boxItem.box.join(', ') : '0,0,0,0'}]</div>
+              </div>
+              <span class="px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0 ${badgeClass}">${confidencePercent}%</span>
+            `;
+            segmentsList.appendChild(seg);
+          });
+        }
+
         const list = document.getElementById('rules-list');
         list.innerHTML = '';
         (data.details?.rule_checks || []).forEach(r => {
@@ -850,6 +994,15 @@ async def index_ui():
         btn.disabled = false;
         lucide.createIcons();
       }
+    }
+
+    let showOcrDetails = false;
+    function toggleRawOcr() {
+      showOcrDetails = !showOcrDetails;
+      const box = document.getElementById('ocr-details-box');
+      const text = document.getElementById('ocr-toggle-text');
+      box.classList.toggle('hidden', !showOcrDetails);
+      text.innerText = showOcrDetails ? 'Hide Detected Bounding Boxes & Confidence' : 'Show Detected Bounding Boxes & Confidence';
     }
 
     async function loadReports() {

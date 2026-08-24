@@ -29,6 +29,15 @@ export const scanProductImage = async (formData: FormData): Promise<ComplianceRe
   return response.data;
 };
 
+export const runOcr = async (formData: FormData): Promise<any> => {
+  const response = await api.post('/ocr', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+
 export const uploadProductImage = async (formData: FormData): Promise<ComplianceReport> => {
   const response = await api.post('/upload', formData, {
     headers: {

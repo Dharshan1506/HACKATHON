@@ -323,11 +323,41 @@ export const ScanProduct: React.FC = () => {
 
                 {/* Toggleable Raw OCR Output */}
                 {showRawText && (
-                  <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-                    <div className="text-xs font-mono font-bold text-slate-400">Authentic Raw OCR Extracted Stream:</div>
-                    <pre className="text-xs font-mono text-cyan-300 whitespace-pre-wrap max-h-48 overflow-y-auto p-3 bg-slate-900/80 rounded-xl border border-slate-850">
-                      {report.details?.raw_text || "No raw text recorded."}
-                    </pre>
+                  <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
+                    <div>
+                      <div className="text-xs font-mono font-bold text-slate-400 mb-2">Authentic Raw OCR Extracted Stream:</div>
+                      <pre className="text-xs font-mono text-cyan-300 whitespace-pre-wrap max-h-48 overflow-y-auto p-3 bg-slate-900/80 rounded-xl border border-slate-850">
+                        {report.details?.raw_text || "No raw text recorded."}
+                      </pre>
+                    </div>
+
+                    {/* Detected Text Segments with Bounding Boxes & Confidence */}
+                    {report.details?.bounding_boxes && report.details.bounding_boxes.length > 0 && (
+                      <div className="space-y-2 pt-2 border-t border-slate-900">
+                        <div className="text-xs font-mono font-bold text-slate-400">OCR Bounding Boxes & Confidences:</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1">
+                          {report.details.bounding_boxes.map((boxItem: any, index: number) => (
+                            <div key={index} className="p-2.5 rounded-xl bg-slate-900 border border-slate-850 flex items-center justify-between text-xs">
+                              <div className="space-y-0.5 truncate pr-2">
+                                <div className="text-slate-150 font-semibold truncate text-[11px]">{boxItem.text}</div>
+                                <div className="text-[10px] text-slate-500 font-mono">
+                                  Box: [{boxItem.box ? boxItem.box.join(', ') : '0, 0, 0, 0'}]
+                                </div>
+                              </div>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                                boxItem.confidence >= 0.85 
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                  : boxItem.confidence >= 0.7 
+                                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' 
+                                    : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                              }`}>
+                                {Math.round(boxItem.confidence * 100)}%
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -142,6 +142,30 @@ async def scan_product(
         "created_at": scan_result.created_at.isoformat()
     }
 
+@router.post("/ocr")
+async def run_dedicated_ocr(file: UploadFile = File(...)):
+    """
+    Accepts image file, runs OpenCV preprocessing and PaddleOCR to return raw text + bounding boxes + confidence
+    """
+    ext = os.path.splitext(file.filename)[1] or ".jpg"
+    unique_filename = f"ocr_{uuid.uuid4().hex[:10]}{ext}"
+    saved_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
+
+    with open(saved_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    try:
+        ocr_result = await OCREngine.process_image(saved_path, file.filename)
+    finally:
+        if os.path.exists(saved_path):
+            try:
+                os.remove(saved_path)
+            except Exception:
+                pass
+
+    return ocr_result
+
 @router.post("/upload")
 async def upload_product_package(
     file: UploadFile = File(...),
