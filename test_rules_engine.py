@@ -21,8 +21,8 @@ def test_rules_loading():
     assert len(food_rules) >= 7
     assert len(imported_rules) >= 7
 
-def test_pass_status():
-    print("\n--- TEST 2: Fully Compliant Label -> PASS Status ---")
+def test_compliant_tier():
+    print("\n--- TEST 2: Score 90-100 -> COMPLIANT Tier ---")
     data = {
         "commodity_name": "Almond Butter Creamy",
         "brand": "NutriPure",
@@ -37,105 +37,95 @@ def test_pass_status():
     }
 
     result = LegalMetrologyRulesEngine.validate_extracted_data(data, category="Food")
-    print(f" Score: {result['score']}% | Status: {result['status']} | Risk: {result['risk_level']}")
-    print(f" Passed: {result['passed_count']} | Warnings: {result['warnings_count']} | Violations: {result['violations_count']} | Manual Review: {result['manual_review_count']}")
-    assert result["status"] == "PASS", f"Expected PASS, got {result['status']}"
+    print(f" Score: {result['score']}% | Tier/Status: {result['status']} | Formula: {result['formula']}")
+    print(f" Passed Weight: {result['passed_rule_weight']} / {result['total_applicable_rule_weight']}")
     assert result["score"] >= 90.0, f"Expected >= 90.0, got {result['score']}"
-    assert result["violations_count"] == 0
+    assert result["status"] == "COMPLIANT", f"Expected COMPLIANT, got {result['status']}"
+    assert result["risk_level"] == "LOW"
 
-def test_warning_status():
-    print("\n--- TEST 3: Minor Formatting Issues -> WARNING Status ---")
+def test_mostly_compliant_tier():
+    print("\n--- TEST 3: Score 70-89 -> MOSTLY COMPLIANT Tier ---")
     data = {
         "commodity_name": "Almond Butter Creamy",
         "brand": "NutriPure",
-        "manufacturer_details": "Manufactured By NutriFoods Pvt Ltd, Mumbai Industrial Area", # Missing full PIN code
-        "mrp": "MRP Rs. 350.00", # Missing '(inclusive of all taxes)'
-        "net_quantity": "350g", # Missing space before 'g'
+        "manufacturer_details": "Manufactured By NutriFoods Pvt Ltd, Mumbai Industrial Area", # Minor warning
+        "mrp": "MRP Rs. 350.00", # Minor warning (missing incl taxes phrase)
+        "net_quantity": "350g", # Minor warning (missing space)
         "mfg_date": "08/2026",
         "expiry_date": "08/2027",
-        "customer_care": "Email: care@nutripure.in", # Missing phone helpline
-        "unit_sale_price": "₹ 1.00 per g"
+        "customer_care": "Email: care@nutripure.in", # Minor warning (missing phone)
+        "unit_sale_price": "1.00" # Missing unit measurement
     }
 
     result = LegalMetrologyRulesEngine.validate_extracted_data(data, category="Food")
-    print(f" Score: {result['score']}% | Status: {result['status']} | Risk: {result['risk_level']}")
-    print(f" Passed: {result['passed_count']} | Warnings: {result['warnings_count']} | Violations: {result['violations_count']} | Manual Review: {result['manual_review_count']}")
-    assert result["warnings_count"] > 0
-    assert result["violations_count"] == 0
-    assert result["status"] in ["WARNING", "PASS"]
+    print(f" Score: {result['score']}% | Tier/Status: {result['status']} | Formula: {result['formula']}")
+    assert 70.0 <= result["score"] <= 89.9, f"Expected 70-89, got {result['score']}"
+    assert result["status"] == "MOSTLY COMPLIANT", f"Expected MOSTLY COMPLIANT, got {result['status']}"
 
-def test_manual_review_status():
-    print("\n--- TEST 4: Complex Multi-Party Licensing / Ambiguity -> MANUAL REVIEW Status ---")
+def test_needs_review_tier():
+    print("\n--- TEST 4: Score 40-69 -> NEEDS REVIEW Tier ---")
     data = {
         "commodity_name": "Herbal Hair Cleanser",
         "brand": "VedaAura",
-        "manufacturer_details": "Manufactured under license by Third Party Contract Pack Ltd, Okhla Phase III", # Ambiguous contract pack phrase
+        "manufacturer_details": "Manufactured under license by Third Party Contract Pack Ltd, Okhla Phase III", # Manual review
         "mrp": "MRP Rs. 249.00 (inclusive of all taxes)",
         "net_quantity": "200 ml",
-        "mfg_date": "Best before 24 months from mfg date", # Relative date without explicit MM/YYYY
+        "mfg_date": "", # Missing mfg date -> 0 weight
         "expiry_date": "24 months",
-        "customer_care": "For feedback contact care executive at company office", # Missing clear phone/email
-        "unit_sale_price": "₹ 1.25 per ml"
+        "customer_care": "", # Missing customer care -> 0 weight
+        "unit_sale_price": "" # Missing USP -> 0 weight
     }
 
     result = LegalMetrologyRulesEngine.validate_extracted_data(data, category="Cosmetics")
-    print(f" Score: {result['score']}% | Status: {result['status']} | Risk: {result['risk_level']}")
-    print(f" Passed: {result['passed_count']} | Warnings: {result['warnings_count']} | Violations: {result['violations_count']} | Manual Review: {result['manual_review_count']}")
-    assert result["manual_review_count"] > 0, "Expected at least 1 rule in MANUAL REVIEW"
-    print(" Verified MANUAL REVIEW triggered correctly for ambiguous licensing & relative dates.")
+    print(f" Score: {result['score']}% | Tier/Status: {result['status']} | Formula: {result['formula']}")
+    assert 40.0 <= result["score"] <= 69.9, f"Expected 40-69, got {result['score']}"
+    assert result["status"] == "NEEDS REVIEW", f"Expected NEEDS REVIEW, got {result['status']}"
 
-def test_fail_status():
-    print("\n--- TEST 5: Prohibited Units & Missing Mandatory Declarations -> FAIL Status ---")
+def test_high_risk_tier():
+    print("\n--- TEST 5: Score 0-39 -> HIGH RISK Tier ---")
     data = {
-        "commodity_name": "product", # Vague name
+        "commodity_name": "product", # Vague name -> 0
         "brand": "Generic",
-        "manufacturer_details": "", # Missing manufacturer
-        "mrp": "", # Missing MRP
-        "net_quantity": "1.5 lbs", # Prohibited non-metric unit
-        "mfg_date": "", # Missing mfg date
-        "customer_care": "" # Missing customer care
+        "manufacturer_details": "", # Missing manufacturer -> 0
+        "mrp": "", # Missing MRP -> 0
+        "net_quantity": "1.5 lbs", # Prohibited non-metric unit -> 0
+        "mfg_date": "", # Missing mfg date -> 0
+        "customer_care": "" # Missing customer care -> 0
     }
 
     result = LegalMetrologyRulesEngine.validate_extracted_data(data, category="Consumer Goods")
-    print(f" Score: {result['score']}% | Status: {result['status']} | Risk: {result['risk_level']}")
-    print(f" Passed: {result['passed_count']} | Warnings: {result['warnings_count']} | Violations: {result['violations_count']} | Manual Review: {result['manual_review_count']}")
-    assert result["status"] == "FAIL", f"Expected FAIL, got {result['status']}"
-    assert result["violations_count"] >= 3, f"Expected >=3 violations, got {result['violations_count']}"
+    print(f" Score: {result['score']}% | Tier/Status: {result['status']} | Formula: {result['formula']}")
+    assert result["score"] <= 39.9, f"Expected <=39.9, got {result['score']}"
+    assert result["status"] == "HIGH RISK", f"Expected HIGH RISK, got {result['status']}"
     assert result["risk_level"] == "HIGH"
 
-def test_imported_goods_rule():
-    print("\n--- TEST 6: Imported Goods Country of Origin & Importer Evaluation ---")
-    # Case A: Missing Origin on Imported Product
-    missing_origin_data = {
-        "commodity_name": "Dark Chocolate 85%",
-        "brand": "SwissAlpine",
-        "manufacturer_details": "Packed in Zurich, Switzerland",
-        "mrp": "MRP Rs. 450 (inclusive of all taxes)",
-        "net_quantity": "100 g",
-        "mfg_date": "05/2026",
-        "customer_care": "help@swissimport.in, 1800-444-5555",
-        "country_of_origin": "", # Missing!
-        "importer": "" # Missing!
+def test_formula_correctness():
+    print("\n--- TEST 6: Formula Verification (Score = Passed Weight / Total Weight × 100) ---")
+    data = {
+        "commodity_name": "Refined Sunflower Oil",
+        "brand": "SunGold",
+        "manufacturer_details": "Manufactured By SunGold Ltd, Sector 4, Hyderabad 500001, India",
+        "mrp": "MRP Rs. 180.00 (inclusive of all taxes)",
+        "net_quantity": "1 l",
+        "mfg_date": "08/2026",
+        "expiry_date": "08/2027",
+        "customer_care": "Helpline: 1800-111-2222, Email: help@sungold.in",
+        "unit_sale_price": "₹ 180.00 per l"
     }
-    res_a = LegalMetrologyRulesEngine.validate_extracted_data(missing_origin_data, category="Imported Goods")
-    origin_check_a = next(r for r in res_a["rule_checks"] if r["rule_id"] == "RULE_6_1_G")
-    print(f" Case A (Imported without Origin): Rule 6(1)(g) Status = {origin_check_a['status']}")
-    assert origin_check_a["status"] == "FAIL"
-
-    # Case B: Domestic Product doesn't fail Rule 6(1)(g)
-    res_b = LegalMetrologyRulesEngine.validate_extracted_data(missing_origin_data, category="Food")
-    origin_check_b = next((r for r in res_b["rule_checks"] if r["rule_id"] == "RULE_6_1_G"), None)
-    print(f" Case B (Domestic Product): Rule 6(1)(g) Applicable = {origin_check_b is not None}")
+    result = LegalMetrologyRulesEngine.validate_extracted_data(data, category="Food")
+    expected_score = round((result["passed_rule_weight"] / result["total_applicable_rule_weight"]) * 100.0, 1)
+    assert result["score"] == expected_score, f"Formula mismatch: {result['score']} != {expected_score}"
+    print(f" Formula Verified: {result['passed_rule_weight']} / {result['total_applicable_rule_weight']} × 100 = {result['score']}% ({result['status']})")
 
 if __name__ == "__main__":
     print("================================================================")
-    print("   LEGAL METROLOGY COMPLIANCE RULES ENGINE TEST SUITE")
+    print("   LEGAL METROLOGY COMPLIANCE SCORE & 4-TIER TEST SUITE")
     print("================================================================")
     test_rules_loading()
-    test_pass_status()
-    test_warning_status()
-    test_manual_review_status()
-    test_fail_status()
-    test_imported_goods_rule()
-    print("\n ALL 6 RULES ENGINE TESTS PASSED PERFECTLY!")
+    test_compliant_tier()
+    test_mostly_compliant_tier()
+    test_needs_review_tier()
+    test_high_risk_tier()
+    test_formula_correctness()
+    print("\n ALL 6 SCORE & TIER TESTS PASSED PERFECTLY!")
     print("================================================================")

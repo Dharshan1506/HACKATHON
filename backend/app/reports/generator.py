@@ -76,7 +76,7 @@ class ReportGenerator:
         status = scan_data.get("compliance_status", "UNKNOWN")
         risk = scan_data.get("risk_level", "UNKNOWN")
 
-        status_color = "#10B981" if status == "PASS" else ("#F59E0B" if status == "WARNING" else "#EF4444")
+        status_color = "#10B981" if score >= 90 else ("#06B6D4" if score >= 70 else ("#F59E0B" if score >= 40 else "#EF4444"))
 
         overview_data = [
             [

@@ -328,19 +328,71 @@ export const ScanProduct: React.FC = () => {
                   <div className="flex items-center gap-4">
                     <div className="text-right">
                       <div className="text-3xl font-black text-white">{report.compliance_score}%</div>
-                      <div className="text-[11px] text-slate-400 font-semibold">Compliance Score</div>
+                      <div className="text-[11px] text-slate-400 font-semibold">Deterministic Score</div>
                     </div>
-                    <span className={`text-sm py-2 px-3.5 font-bold rounded-full border ${
-                      report.compliance_status === 'PASS'
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                        : report.compliance_status === 'WARNING'
-                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                          : report.compliance_status === 'MANUAL REVIEW'
-                            ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-                            : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                    <span className={`text-xs py-2 px-3.5 font-extrabold rounded-full border tracking-wide uppercase ${
+                      report.compliance_score >= 90
+                        ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                        : report.compliance_score >= 70
+                          ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'
+                          : report.compliance_score >= 40
+                            ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                            : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
                     }`}>
-                      {report.compliance_status}
+                      {report.compliance_score >= 90 ? 'COMPLIANT' : report.compliance_score >= 70 ? 'MOSTLY COMPLIANT' : report.compliance_score >= 40 ? 'NEEDS REVIEW' : 'HIGH RISK'}
                     </span>
+                  </div>
+                </div>
+
+                {/* Deterministic Compliance Score Calculation Box */}
+                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-slate-400 text-xs font-bold uppercase tracking-wider">
+                    <span className="flex items-center gap-1.5 text-cyan-400">
+                      <Scale className="w-4 h-4" />
+                      <span>Formula: Score = Passed Rule Weight / Total Applicable Rule Weight × 100</span>
+                    </span>
+                    <span className="font-mono text-cyan-300 font-bold text-xs">
+                      {report.details?.formula || `Score = ${report.compliance_score}%`}
+                    </span>
+                  </div>
+
+                  {/* 4 Score Tiers Scale */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                    <div className={`p-2.5 rounded-xl border text-center transition-all ${
+                      report.compliance_score >= 90
+                        ? 'bg-emerald-500/20 border-emerald-500 ring-1 ring-emerald-500/50 shadow-md shadow-emerald-500/10'
+                        : 'bg-emerald-500/5 border-emerald-500/10 opacity-70'
+                    }`}>
+                      <div className="font-extrabold text-emerald-400 text-xs">90 – 100%</div>
+                      <div className="text-[10px] text-emerald-300 font-bold uppercase tracking-wider">COMPLIANT</div>
+                    </div>
+
+                    <div className={`p-2.5 rounded-xl border text-center transition-all ${
+                      report.compliance_score >= 70 && report.compliance_score < 90
+                        ? 'bg-cyan-500/20 border-cyan-500 ring-1 ring-cyan-500/50 shadow-md shadow-cyan-500/10'
+                        : 'bg-cyan-500/5 border-cyan-500/10 opacity-70'
+                    }`}>
+                      <div className="font-extrabold text-cyan-400 text-xs">70 – 89%</div>
+                      <div className="text-[10px] text-cyan-300 font-bold uppercase tracking-wider">MOSTLY COMPLIANT</div>
+                    </div>
+
+                    <div className={`p-2.5 rounded-xl border text-center transition-all ${
+                      report.compliance_score >= 40 && report.compliance_score < 70
+                        ? 'bg-amber-500/20 border-amber-500 ring-1 ring-amber-500/50 shadow-md shadow-amber-500/10'
+                        : 'bg-amber-500/5 border-amber-500/10 opacity-70'
+                    }`}>
+                      <div className="font-extrabold text-amber-400 text-xs">40 – 69%</div>
+                      <div className="text-[10px] text-amber-300 font-bold uppercase tracking-wider">NEEDS REVIEW</div>
+                    </div>
+
+                    <div className={`p-2.5 rounded-xl border text-center transition-all ${
+                      report.compliance_score < 40
+                        ? 'bg-rose-500/20 border-rose-500 ring-1 ring-rose-500/50 shadow-md shadow-rose-500/10'
+                        : 'bg-rose-500/5 border-rose-500/10 opacity-70'
+                    }`}>
+                      <div className="font-extrabold text-rose-400 text-xs">0 – 39%</div>
+                      <div className="text-[10px] text-rose-300 font-bold uppercase tracking-wider">HIGH RISK</div>
+                    </div>
                   </div>
                 </div>
 

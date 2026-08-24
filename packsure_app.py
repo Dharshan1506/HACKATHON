@@ -150,6 +150,44 @@ class LegalMetrologyRulesEngine:
     """
 
     @classmethod
+    def classify_tier(cls, score: float) -> Dict[str, Any]:
+        """
+        Deterministic Compliance Score Tiers:
+        90-100 = COMPLIANT
+        70-89  = MOSTLY COMPLIANT
+        40-69  = NEEDS REVIEW
+        0-39   = HIGH RISK
+        """
+        if score >= 90.0:
+            return {
+                "tier": "COMPLIANT",
+                "risk_level": "LOW",
+                "badge_class": "badge-compliant",
+                "color": "#10B981"
+            }
+        elif score >= 70.0:
+            return {
+                "tier": "MOSTLY COMPLIANT",
+                "risk_level": "LOW",
+                "badge_class": "badge-mostly-compliant",
+                "color": "#06B6D4"
+            }
+        elif score >= 40.0:
+            return {
+                "tier": "NEEDS REVIEW",
+                "risk_level": "MEDIUM",
+                "badge_class": "badge-needs-review",
+                "color": "#F59E0B"
+            }
+        else:
+            return {
+                "tier": "HIGH RISK",
+                "risk_level": "HIGH",
+                "badge_class": "badge-high-risk",
+                "color": "#EF4444"
+            }
+
+    @classmethod
     def validate(cls, data: Dict[str, Any], category: str = "ALL") -> Dict[str, Any]:
         rules = RulesRegistry.get_rules(category)
         results = []
@@ -177,33 +215,28 @@ class LegalMetrologyRulesEngine:
                 "remediation": res["remediation"]
             })
 
+        # Formula: Score = Passed Rule Weight / Total Applicable Rule Weight * 100
         final_score = round((earned / total) * 100.0, 1) if total > 0 else 0.0
-        
+        tier_info = cls.classify_tier(final_score)
+        status = tier_info["tier"]
+        risk = tier_info["risk_level"]
+
         passed_count = sum(1 for r in results if r["status"] == "PASS")
         warnings_count = sum(1 for r in results if r["status"] == "WARNING")
         violations_count = sum(1 for r in results if r["status"] == "FAIL")
         manual_review_count = sum(1 for r in results if r["status"] == "MANUAL REVIEW")
-
-        # Deterministic status verdict
-        if violations_count > 0:
-            status = "FAIL"
-            risk = "HIGH" if violations_count >= 2 else "MEDIUM"
-        elif manual_review_count > 0:
-            status = "MANUAL REVIEW"
-            risk = "MEDIUM"
-        elif warnings_count > 0 or final_score < 85.0:
-            status = "WARNING"
-            risk = "LOW"
-        else:
-            status = "PASS"
-            risk = "LOW"
 
         summary = cls._generate_summary(final_score, status, passed_count, warnings_count, violations_count, manual_review_count)
 
         return {
             "score": final_score,
             "status": status,
+            "tier": status,
+            "compliance_tier": status,
             "risk_level": risk,
+            "passed_rule_weight": round(earned, 1),
+            "total_applicable_rule_weight": total,
+            "formula": f"Score = {round(earned, 1)} / {total} × 100 = {final_score}%",
             "passed_count": passed_count,
             "warnings_count": warnings_count,
             "violations_count": violations_count,
@@ -330,14 +363,14 @@ class LegalMetrologyRulesEngine:
 
     @classmethod
     def _generate_summary(cls, score: float, status: str, passed: int, warnings: int, violations: int, manual_review: int) -> str:
-        if status == "PASS":
-            return f"Product packaging demonstrates high statutory compliance ({score}%) under the Legal Metrology (Packaged Commodities) Rules, 2011. All {passed} evaluated declarations satisfy mandatory formatting and unit standards."
-        elif status == "MANUAL REVIEW":
-            return f"Statutory audit scored {score}%. {manual_review} declaration(s) flagged for MANUAL REVIEW due to complex licensing structures or ambiguous packaging phrases. Inspector verification recommended."
-        elif status == "WARNING":
-            return f"Statutory audit scored {score}% with {warnings} minor warning(s). Key declarations exist but contain minor discrepancies that require rectification."
+        if score >= 90.0:
+            return f"Product packaging is COMPLIANT ({score}% compliance score) under the Legal Metrology (Packaged Commodities) Rules, 2011. All {passed} mandatory statutory declarations meet required formatting, placement, and metric standards."
+        elif score >= 70.0:
+            return f"Product packaging is MOSTLY COMPLIANT ({score}% compliance score). Found {warnings} minor warning(s) or formatting adjustments. Rectify minor discrepancies before full-scale commercial packaging."
+        elif score >= 40.0:
+            return f"Product packaging NEEDS REVIEW ({score}% compliance score). Found {manual_review} item(s) flagged for manual verification or non-standard declarations under Legal Metrology standards."
         else:
-            return f"Statutory audit FAILED with score {score}%. Found {violations} statutory violation(s) under the Legal Metrology Act 2009 & Packaged Commodities Rules 2011. Remediation required before market distribution."
+            return f"Product packaging is HIGH RISK ({score}% compliance score). Detected {violations} critical statutory violation(s) under the Legal Metrology Act 2009. Packaging does not meet mandatory consumer packaging regulations."
 
 # -----------------------------------------------------------------------------
 # Real OCR Engine (EasyOCR + PyTesseract + Layout)
@@ -1079,10 +1112,15 @@ async def index_ui():
   <style>
     body { font-family: 'Inter', sans-serif; }
     .glass-card { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); }
+    .badge-compliant { background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); font-weight: 700; padding: 4px 12px; border-radius: 9999px; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; }
+    .badge-mostly-compliant { background: rgba(6, 182, 212, 0.18); color: #22d3ee; border: 1px solid rgba(6, 182, 212, 0.35); font-weight: 700; padding: 4px 12px; border-radius: 9999px; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; }
+    .badge-needs-review { background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); font-weight: 700; padding: 4px 12px; border-radius: 9999px; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; }
+    .badge-high-risk { background: rgba(239, 68, 68, 0.18); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); font-weight: 700; padding: 4px 12px; border-radius: 9999px; font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; }
+    
     .badge-pass { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
     .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
     .badge-fail { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
-    .badge-manual-review, .badge-manual_review, .badge-needs_review, .badge-needs-review { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
+    .badge-manual-review, .badge-manual_review { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-cyan-500 selection:text-white">
@@ -1240,6 +1278,38 @@ async def index_ui():
                 </div>
               </div>
               <p id="res-summary" class="text-xs text-slate-300 bg-slate-900/80 p-3 rounded-xl border border-slate-850 leading-relaxed"></p>
+
+              <!-- Deterministic Score Formula & 4-Tier Gauge -->
+              <div class="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5 text-xs">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-slate-400 font-bold text-[11px] uppercase tracking-wider">
+                  <span class="flex items-center gap-1.5 text-cyan-400">
+                    <i data-lucide="calculator" class="w-3.5 h-3.5"></i>
+                    <span>Formula: Score = Passed Weight / Total Weight × 100</span>
+                  </span>
+                  <span id="res-formula-text" class="font-mono text-cyan-300 font-bold"></span>
+                </div>
+                
+                <!-- 4 Tier Range Scale -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
+                  <div class="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                    <div class="font-extrabold text-emerald-400 text-xs">90 – 100%</div>
+                    <div class="text-[10px] text-emerald-300 font-bold uppercase">COMPLIANT</div>
+                  </div>
+                  <div class="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-center">
+                    <div class="font-extrabold text-cyan-400 text-xs">70 – 89%</div>
+                    <div class="text-[10px] text-cyan-300 font-bold uppercase">MOSTLY COMPLIANT</div>
+                  </div>
+                  <div class="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
+                    <div class="font-extrabold text-amber-400 text-xs">40 – 69%</div>
+                    <div class="text-[10px] text-amber-300 font-bold uppercase">NEEDS REVIEW</div>
+                  </div>
+                  <div class="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-center">
+                    <div class="font-extrabold text-rose-400 text-xs">0 – 39%</div>
+                    <div class="text-[10px] text-rose-300 font-bold uppercase">HIGH RISK</div>
+                  </div>
+                </div>
+              </div>
+
               <div class="flex justify-between items-center pt-2 border-b border-slate-800 pb-3 mb-2">
                 <span id="res-counts" class="text-xs font-semibold text-slate-400"></span>
                 <a id="res-pdf-link" target="_blank" class="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold hover:bg-emerald-500/20">
@@ -1443,9 +1513,12 @@ async def index_ui():
         document.getElementById('res-score').innerText = data.compliance_score + '%';
         
         const stEl = document.getElementById('res-status');
-        const statusSlug = (data.compliance_status || 'pass').toLowerCase().replace(/\s+/g, '-');
+        const statusSlug = (data.compliance_status || 'compliant').toLowerCase().replace(/\s+/g, '-');
         stEl.className = 'badge-' + statusSlug;
         stEl.innerText = data.compliance_status;
+        
+        const formulaStr = data.details?.formula || `Score = Passed Weight / Total Weight × 100 = ${data.compliance_score}%`;
+        document.getElementById('res-formula-text').innerText = formulaStr;
         
         document.getElementById('res-summary').innerText = data.summary;
         document.getElementById('res-counts').innerText = 'Passed: ' + (data.passed_count || 0) + ' | Warnings: ' + (data.warnings_count || 0) + ' | Violations: ' + (data.violations_count || 0) + ' | Review: ' + (data.manual_review_count || 0);
@@ -1556,9 +1629,12 @@ async def index_ui():
         document.getElementById('res-score').innerText = data.compliance_score + '%';
         
         const stEl = document.getElementById('res-status');
-        const statusSlug = (data.compliance_status || 'pass').toLowerCase().replace(/\s+/g, '-');
+        const statusSlug = (data.compliance_status || 'compliant').toLowerCase().replace(/\s+/g, '-');
         stEl.className = 'badge-' + statusSlug;
         stEl.innerText = data.compliance_status;
+        
+        const formulaStr = data.details?.formula || `Score = Passed Weight / Total Weight × 100 = ${data.compliance_score}%`;
+        document.getElementById('res-formula-text').innerText = formulaStr;
         
         document.getElementById('res-summary').innerText = data.summary;
         document.getElementById('res-counts').innerText = 'Passed: ' + (data.passed_count || 0) + ' | Warnings: ' + (data.warnings_count || 0) + ' | Violations: ' + (data.violations_count || 0) + ' | Review: ' + (data.manual_review_count || 0);

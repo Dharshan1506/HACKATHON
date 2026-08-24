@@ -65,7 +65,7 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
 
         {/* Status Tabs */}
         <div className="flex flex-wrap items-center gap-1.5 bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800 self-start md:self-auto">
-          {['ALL', 'PASS', 'WARNING', 'MANUAL REVIEW', 'FAIL'].map((st) => (
+          {['ALL', 'COMPLIANT', 'MOSTLY COMPLIANT', 'NEEDS REVIEW', 'HIGH RISK'].map((st) => (
             <button
               key={st}
               onClick={() => setStatusFilter(st)}
@@ -131,16 +131,16 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
                   <span className="text-xs text-slate-400">{rep.category}</span>
                 </div>
                 <div className="text-right">
-                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${
-                    rep.compliance_status === 'PASS'
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                      : rep.compliance_status === 'WARNING'
-                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                        : rep.compliance_status === 'MANUAL REVIEW'
-                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-                          : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                  <span className={`text-xs font-extrabold px-2.5 py-1 rounded-full border uppercase ${
+                    rep.compliance_score >= 90
+                      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                      : rep.compliance_score >= 70
+                        ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'
+                        : rep.compliance_score >= 40
+                          ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                          : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
                   }`}>
-                    {rep.compliance_status} ({rep.compliance_score}%)
+                    {rep.compliance_score >= 90 ? 'COMPLIANT' : rep.compliance_score >= 70 ? 'MOSTLY COMPLIANT' : rep.compliance_score >= 40 ? 'NEEDS REVIEW' : 'HIGH RISK'} ({rep.compliance_score}%)
                   </span>
                   <div className="text-[11px] text-slate-500 mt-1 font-mono">
                     {new Date(rep.created_at).toLocaleDateString()}
@@ -154,8 +154,9 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
 
               <div className="flex items-center justify-between text-xs pt-3 border-t border-slate-800/80">
                 <div className="flex items-center gap-3 text-slate-400 font-medium">
-                  <span className="text-emerald-400">✓ {rep.passed_count} Passed</span>
-                  <span className="text-rose-400">✗ {rep.violations_count} Failures</span>
+                  <span className="text-emerald-400 font-semibold">✓ {rep.passed_count} Passed</span>
+                  <span className="text-amber-400 font-semibold">⚠ {rep.warnings_count || 0} Warnings</span>
+                  <span className="text-rose-400 font-semibold">✗ {rep.violations_count} Violations</span>
                 </div>
                 <span className="text-cyan-400 font-semibold flex items-center gap-1 hover:underline">
                   <Eye className="w-3.5 h-3.5" />
@@ -178,16 +179,16 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
                   <span className="text-xs font-mono font-bold text-cyan-400 px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/20">
                     {selectedReport.report_code}
                   </span>
-                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${
-                    selectedReport.compliance_status === 'PASS'
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                      : selectedReport.compliance_status === 'WARNING'
-                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                        : selectedReport.compliance_status === 'MANUAL REVIEW'
-                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
-                          : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                  <span className={`text-xs font-extrabold px-2.5 py-1 rounded-full border uppercase ${
+                    selectedReport.compliance_score >= 90
+                      ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                      : selectedReport.compliance_score >= 70
+                        ? 'bg-cyan-500/15 text-cyan-400 border-cyan-500/30'
+                        : selectedReport.compliance_score >= 40
+                          ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                          : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
                   }`}>
-                    {selectedReport.compliance_status} ({selectedReport.compliance_score}%)
+                    {selectedReport.compliance_score >= 90 ? 'COMPLIANT' : selectedReport.compliance_score >= 70 ? 'MOSTLY COMPLIANT' : selectedReport.compliance_score >= 40 ? 'NEEDS REVIEW' : 'HIGH RISK'} ({selectedReport.compliance_score}%)
                   </span>
                 </div>
                 <h2 className="text-2xl font-black text-white mt-1.5">{selectedReport.product_name}</h2>

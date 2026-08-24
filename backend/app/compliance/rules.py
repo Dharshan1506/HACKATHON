@@ -138,6 +138,48 @@ class LegalMetrologyRulesEngine:
     """
 
     @classmethod
+    def classify_tier(cls, score: float) -> Dict[str, Any]:
+        """
+        Classifies deterministic compliance score into mandated tiers:
+        90 - 100 = COMPLIANT
+        70 - 89  = MOSTLY COMPLIANT
+        40 - 69  = NEEDS REVIEW
+        0  - 39  = HIGH RISK
+        """
+        if score >= 90.0:
+            return {
+                "tier": "COMPLIANT",
+                "risk_level": "LOW",
+                "badge_class": "badge-compliant",
+                "color": "#10B981",
+                "description": "Packaging is fully compliant with statutory declarations under Legal Metrology Rules."
+            }
+        elif score >= 70.0:
+            return {
+                "tier": "MOSTLY COMPLIANT",
+                "risk_level": "LOW",
+                "badge_class": "badge-mostly-compliant",
+                "color": "#06B6D4",
+                "description": "Packaging meets primary mandatory declarations with minor notices."
+            }
+        elif score >= 40.0:
+            return {
+                "tier": "NEEDS REVIEW",
+                "risk_level": "MEDIUM",
+                "badge_class": "badge-needs-review",
+                "color": "#F59E0B",
+                "description": "Packaging requires manual review due to missing details or ambiguous declarations."
+            }
+        else:
+            return {
+                "tier": "HIGH RISK",
+                "risk_level": "HIGH",
+                "badge_class": "badge-high-risk",
+                "color": "#EF4444",
+                "description": "Critical statutory violations detected. Package is non-compliant and at high regulatory risk."
+            }
+
+    @classmethod
     def validate_extracted_data(cls, extracted_data: Dict[str, Any], category: str = "ALL") -> Dict[str, Any]:
         applicable_rules = RulesRegistry.get_applicable_rules(category)
         results: List[Dict[str, Any]] = []
@@ -172,7 +214,11 @@ class LegalMetrologyRulesEngine:
                 "remediation": check_result["remediation"]
             })
 
+        # Formula: Score = Passed Rule Weight / Total Applicable Rule Weight * 100
         final_score = round((earned_score / total_possible) * 100.0, 1) if total_possible > 0 else 0.0
+        tier_info = cls.classify_tier(final_score)
+        compliance_status = tier_info["tier"]
+        risk_level = tier_info["risk_level"]
 
         # Counts
         passed_count = sum(1 for r in results if r["status"] == "PASS")
@@ -180,27 +226,18 @@ class LegalMetrologyRulesEngine:
         violations_count = sum(1 for r in results if r["status"] == "FAIL")
         manual_review_count = sum(1 for r in results if r["status"] == "MANUAL REVIEW")
 
-        # Deterministic overall compliance status (NOT AI hallucination)
-        if violations_count > 0:
-            compliance_status = "FAIL"
-            risk_level = "HIGH" if violations_count >= 2 else "MEDIUM"
-        elif manual_review_count > 0:
-            compliance_status = "MANUAL REVIEW"
-            risk_level = "MEDIUM"
-        elif warnings_count > 0 or final_score < 85.0:
-            compliance_status = "WARNING"
-            risk_level = "LOW"
-        else:
-            compliance_status = "PASS"
-            risk_level = "LOW"
-
-        # Generate deterministic summary
+        # Generate deterministic summary based on tier and counts
         summary = cls._generate_deterministic_summary(final_score, compliance_status, passed_count, warnings_count, violations_count, manual_review_count)
 
         return {
             "score": final_score,
             "status": compliance_status,
+            "tier": compliance_status,
+            "compliance_tier": compliance_status,
             "risk_level": risk_level,
+            "passed_rule_weight": round(earned_score, 1),
+            "total_applicable_rule_weight": total_possible,
+            "formula": f"Score = {round(earned_score, 1)} / {total_possible} × 100 = {final_score}%",
             "passed_count": passed_count,
             "warnings_count": warnings_count,
             "violations_count": violations_count,
@@ -583,14 +620,14 @@ class LegalMetrologyRulesEngine:
 
     @classmethod
     def _generate_deterministic_summary(cls, score: float, status: str, passed: int, warnings: int, violations: int, manual_review: int) -> str:
-        if status == "PASS":
-            return f"Product packaging demonstrates high statutory compliance ({score}%) under the Legal Metrology (Packaged Commodities) Rules, 2011. All {passed} evaluated declarations satisfy mandatory formatting and unit standards."
-        elif status == "MANUAL REVIEW":
-            return f"Statutory audit scored {score}%. {manual_review} declaration(s) flagged for MANUAL REVIEW due to complex licensing structures or ambiguous packaging phrases. Inspector verification recommended."
-        elif status == "WARNING":
-            return f"Statutory audit scored {score}% with {warnings} minor warning(s). Key declarations exist but contain minor discrepancies (e.g. unit spacing or tax inclusive wording) that require rectification."
+        if score >= 90.0:
+            return f"Product packaging is COMPLIANT ({score}% compliance score) under the Legal Metrology (Packaged Commodities) Rules, 2011. All {passed} mandatory statutory declarations meet required formatting, placement, and metric standards."
+        elif score >= 70.0:
+            return f"Product packaging is MOSTLY COMPLIANT ({score}% compliance score). Found {warnings} minor warning(s) or formatting adjustments. Rectify minor discrepancies before full-scale commercial distribution."
+        elif score >= 40.0:
+            return f"Product packaging NEEDS REVIEW ({score}% compliance score). Found {manual_review} item(s) flagged for manual verification or non-standard declarations under Legal Metrology standards."
         else:
-            return f"Statutory audit FAILED with score {score}%. Found {violations} statutory violation(s) under the Legal Metrology Act 2009 & Packaged Commodities Rules 2011. Remediation required before market distribution."
+            return f"Product packaging is HIGH RISK ({score}% compliance score). Detected {violations} critical statutory violation(s) under the Legal Metrology Act 2009. Packaging does not meet mandatory consumer packaging regulations."
 
 
 # Alias for backward compatibility

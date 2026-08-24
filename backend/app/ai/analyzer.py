@@ -29,8 +29,13 @@ class ComplianceAIAnalyzer:
         return {
             "score": score,
             "status": status,
+            "compliance_tier": status,
+            "tier": status,
             "risk_level": risk_level,
             "summary": summary,
+            "passed_rule_weight": rule_eval.get("passed_rule_weight", 0),
+            "total_applicable_rule_weight": rule_eval.get("total_applicable_rule_weight", 0),
+            "formula": rule_eval.get("formula", f"Score = {score}%"),
             "passed_count": rule_eval["passed_count"],
             "warnings_count": rule_eval["warnings_count"],
             "violations_count": rule_eval["violations_count"],
@@ -46,23 +51,26 @@ class ComplianceAIAnalyzer:
         
         failed = [r["title"] for r in rules if r["status"] == "FAIL"]
         warned = [r["title"] for r in rules if r["status"] == "WARNING"]
+        review = [r["title"] for r in rules if r["status"] == "MANUAL REVIEW"]
 
-        if status == "PASS":
+        if score >= 90.0:
             return (
-                f"The packaging label for '{brand} - {commodity}' scored {score}% compliance under the "
-                f"Legal Metrology (Packaged Commodities) Rules, 2011. All 7 mandatory declarations are validly "
-                f"presented with clear legible font and required standard metric units."
+                f"The packaging label for '{brand} - {commodity}' is COMPLIANT ({score}% score) under the "
+                f"Legal Metrology (Packaged Commodities) Rules, 2011. Mandatory declarations satisfy all unit and placement standards."
             )
-        elif status == "WARNING":
+        elif score >= 70.0:
             return (
-                f"The label for '{brand} - {commodity}' achieved {score}% compliance. "
-                f"Minor warnings detected in: {', '.join(warned)}. Address these warnings to prevent statutory notices "
-                f"from state Legal Metrology inspectors."
+                f"The label for '{brand} - {commodity}' is MOSTLY COMPLIANT ({score}% score). "
+                f"Minor warnings noted in: {', '.join(warned) if warned else 'formatting details'}. Rectify to prevent regulatory inspection queries."
+            )
+        elif score >= 40.0:
+            return (
+                f"The label for '{brand} - {commodity}' is flagged as NEEDS REVIEW ({score}% score). "
+                f"Items requiring inspector review: {', '.join(review + warned + failed)}. Verify declarations against physical label packaging."
             )
         else:
             issues = failed + warned
             return (
-                f"CRITICAL COMPLIANCE FAILURE: '{brand} - {commodity}' scored only {score}% ({risk} Legal Risk). "
-                f"Violations detected in mandatory requirements: {', '.join(issues)}. Continued distribution of non-compliant "
-                f"packaged goods risks seizure under Section 36 of the Legal Metrology Act, 2009."
+                f"HIGH RISK DETECTED: '{brand} - {commodity}' scored only {score}% ({risk} Legal Risk). "
+                f"Violations detected in mandatory requirements: {', '.join(issues)}. Continued distribution risks regulatory seizure under the Legal Metrology Act, 2009."
             )

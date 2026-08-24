@@ -29,6 +29,9 @@ export interface ExtractedPayload {
   summary: string;
   action_items?: string[];
   manual_review_count?: number;
+  formula?: string;
+  passed_rule_weight?: number;
+  total_applicable_rule_weight?: number;
 }
 
 export interface ComplianceReport {
@@ -40,12 +43,17 @@ export interface ComplianceReport {
   detected_category?: string;
   brand?: string;
   compliance_score: number;
-  compliance_status: 'PASS' | 'FAIL' | 'WARNING' | 'MANUAL REVIEW';
+  compliance_status: string;
+  compliance_tier?: string;
+  tier?: string;
   risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   violations_count: number;
   warnings_count: number;
   passed_count: number;
   manual_review_count?: number;
+  formula?: string;
+  passed_rule_weight?: number;
+  total_applicable_rule_weight?: number;
   created_at: string;
   summary: string;
   details?: ExtractedPayload;
