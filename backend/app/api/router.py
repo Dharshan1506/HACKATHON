@@ -1,7 +1,7 @@
 import os
 import uuid
 import datetime
-from typing import Optional, List
+from typing import Optional, List, Any
 from fastapi import APIRouter, Depends, File, UploadFile, Form, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,12 @@ from app.compliance.rules import LegalMetrologyRulesEngine
 from app.reports.generator import ReportGenerator
 
 router = APIRouter(prefix=settings.API_PREFIX)
+
+def _clean_form_str(val: Any) -> Optional[str]:
+    if val is None or not isinstance(val, str):
+        return None
+    cleaned = val.strip()
+    return cleaned if cleaned else None
 
 @router.get("/health")
 async def health_check():
@@ -41,8 +47,12 @@ async def scan_product(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Accepts packaging label image, runs OCR extraction and AI Legal Metrology compliance evaluation.
+    Accepts packaging label image, runs genuine OCR extraction and AI Legal Metrology compliance evaluation.
     """
+    clean_p_name = _clean_form_str(product_name)
+    clean_category = _clean_form_str(category) or "Packaged Commodity"
+    clean_brand = _clean_form_str(brand)
+
     ext = os.path.splitext(file.filename)[1] or ".jpg"
     unique_filename = f"scan_{uuid.uuid4().hex[:10]}{ext}"
     saved_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
@@ -51,14 +61,14 @@ async def scan_product(
         content = await file.read()
         f.write(content)
 
-    # 1. Run OCR
+    # 1. Run Authentic OCR
     ocr_result = await OCREngine.process_image(saved_path, file.filename)
     fields = ocr_result["fields"]
 
-    if product_name:
-        fields["commodity_name"] = product_name
-    if brand:
-        fields["brand"] = brand
+    if clean_p_name:
+        fields["commodity_name"] = clean_p_name
+    if clean_brand:
+        fields["brand"] = clean_brand
 
     # 2. Run AI Compliance Evaluation
     compliance_analysis = ComplianceAIAnalyzer.analyze(fields)
@@ -73,10 +83,14 @@ async def scan_product(
     }
 
     # 3. Save Product
-    p_name = fields.get("commodity_name", product_name or "Packaged Product")
-    p_brand = fields.get("brand", brand or "Generic Brand")
+    p_name = fields.get("commodity_name") or clean_p_name or "Packaged Product"
+    p_brand = fields.get("brand") or clean_brand or "Generic Brand"
     
-    product = Product(name=f"{p_brand} - {p_name}", category=category, brand=p_brand)
+    product = Product(
+        name=f"{p_brand} - {p_name}" if p_brand and p_name else (p_name or "Product"),
+        category=clean_category,
+        brand=p_brand
+    )
     db.add(product)
     await db.flush()
 
@@ -109,25 +123,32 @@ async def scan_product(
     await db.commit()
 
     return {
+        "id": report.id,
         "scan_id": scan_result.id,
         "report_id": report.id,
         "report_code": report.report_code,
         "product_name": product.name,
+        "category": product.category,
+        "brand": product.brand,
         "compliance_score": scan_result.compliance_score,
         "compliance_status": scan_result.compliance_status,
         "risk_level": scan_result.risk_level,
+        "passed_count": report.passed_count,
+        "warnings_count": report.warnings_count,
+        "violations_count": report.violations_count,
         "summary": compliance_analysis["summary"],
         "extracted_data": extracted_payload,
+        "details": extracted_payload,
         "created_at": scan_result.created_at.isoformat()
     }
 
 @router.post("/upload")
 async def upload_product_package(
     file: UploadFile = File(...),
-    category: str = Form("Packaged Food"),
+    category: Optional[str] = Form("Packaged Food"),
     db: AsyncSession = Depends(get_db)
 ):
-    return await scan_product(file=file, category=category, db=db)
+    return await scan_product(file=file, product_name=None, category=category, brand=None, db=db)
 
 @router.get("/reports")
 async def list_reports(
@@ -229,63 +250,3 @@ async def download_report_pdf(report_id: int, db: AsyncSession = Depends(get_db)
         media_type="application/pdf",
         filename=pdf_filename
     )
-
-@router.post("/demo/seed")
-async def seed_demo_data(db: AsyncSession = Depends(get_db)):
-    """
-    Populates database with sample packaged commodity scan reports.
-    """
-    sample_files = [
-        ("cooking_oil.jpg", "SunPure - Refined Sunflower Cooking Oil", "Packaged Food"),
-        ("choco_biscuit.jpg", "NutriBite - Choco Crunch Biscuits", "Packaged Food"),
-        ("herbal_shampoo.jpg", "Botanica - Herbal Hair Shampoo", "Cosmetics"),
-        ("organic_milk.jpg", "PureNature - Organic Almond Milk", "Dairy & Beverages")
-    ]
-
-    created = 0
-    for filename, p_name, category in sample_files:
-        mock_path = os.path.join(settings.UPLOAD_DIR, filename)
-
-        ocr_res = await OCREngine.process_image(mock_path, filename)
-        comp_res = ComplianceAIAnalyzer.analyze(ocr_res["fields"])
-
-        extracted_payload = {
-            "fields": ocr_res["fields"],
-            "raw_text": ocr_res["raw_text"],
-            "bounding_boxes": ocr_res["bounding_boxes"],
-            "rule_checks": comp_res["rule_checks"],
-            "summary": comp_res["summary"],
-            "action_items": comp_res["action_items"]
-        }
-
-        prod = Product(name=p_name, category=category, brand=ocr_res["fields"].get("brand", "Brand"))
-        db.add(prod)
-        await db.flush()
-
-        scan = ScanResult(
-            product_id=prod.id,
-            image_url=f"/uploads/{filename}",
-            image_filename=filename,
-            extracted_data=extracted_payload,
-            compliance_score=comp_res["score"],
-            compliance_status=comp_res["status"],
-            risk_level=comp_res["risk_level"]
-        )
-        db.add(scan)
-        await db.flush()
-
-        rep = Report(
-            scan_id=scan.id,
-            report_code=f"PSR-{uuid.uuid4().hex[:6].upper()}",
-            title=f"Legal Metrology Audit - {p_name}",
-            summary=comp_res["summary"],
-            violations_count=comp_res["violations_count"],
-            warnings_count=comp_res["warnings_count"],
-            passed_count=comp_res["passed_count"],
-            details=extracted_payload
-        )
-        db.add(rep)
-        created += 1
-
-    await db.commit()
-    return {"message": f"Successfully seeded {created} demo compliance audit reports."}
