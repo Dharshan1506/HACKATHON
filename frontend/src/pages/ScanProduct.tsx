@@ -11,7 +11,7 @@ export const ScanProduct: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [productName, setProductName] = useState('');
-  const [category, setCategory] = useState('Packaged Food');
+  const [category, setCategory] = useState('Auto-Detect');
   const [isScanning, setIsScanning] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [report, setReport] = useState<ComplianceReport | null>(null);
@@ -20,6 +20,7 @@ export const ScanProduct: React.FC = () => {
   const [fields, setFields] = useState<Record<string, string>>({
     commodity_name: '',
     brand: '',
+    category: 'Food',
     manufacturer_details: '',
     address: '',
     importer: '',
@@ -81,10 +82,14 @@ export const ScanProduct: React.FC = () => {
       const res = await scanProductImage(formData);
       setReport(res);
       
+      const detectedCat = res.category || (res as any).detected_category || 'Food';
+      setCategory(detectedCat);
+
       const extractedFields = res.details?.fields || {};
       setFields({
         commodity_name: extractedFields.commodity_name || '',
         brand: extractedFields.brand || '',
+        category: detectedCat,
         manufacturer_details: extractedFields.manufacturer_details || '',
         address: extractedFields.address || '',
         importer: extractedFields.importer || '',
@@ -116,6 +121,9 @@ export const ScanProduct: React.FC = () => {
       });
       const res = await updateScanResult(formData);
       setReport(res);
+      if (res.category) {
+        setCategory(res.category);
+      }
       alert('Compliance re-evaluated successfully!');
     } catch (err: any) {
       console.error("Update error:", err);
@@ -252,11 +260,13 @@ export const ScanProduct: React.FC = () => {
                   onChange={(e) => setCategory(e.target.value)}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-cyan-500 transition-colors"
                 >
-                  <option value="Packaged Food">Packaged Food</option>
-                  <option value="Dairy & Beverages">Dairy & Beverages</option>
-                  <option value="Cosmetics & Personal Care">Cosmetics & Personal Care</option>
-                  <option value="Electronics & Appliances">Electronics & Appliances</option>
-                  <option value="General Goods">General Packaged Goods</option>
+                  <option value="Auto-Detect">Auto-Detect (AI Classification)</option>
+                  <option value="Food">Food</option>
+                  <option value="Cosmetics">Cosmetics</option>
+                  <option value="Household">Household</option>
+                  <option value="Consumer Goods">Consumer Goods</option>
+                  <option value="Imported Goods">Imported Goods</option>
+                  <option value="Other">Other</option>
                 </select>
               </div>
 
@@ -304,11 +314,15 @@ export const ScanProduct: React.FC = () => {
               <div className="glass-card p-7 rounded-3xl border border-slate-800 space-y-5 shadow-xl">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-800">
                   <div>
-                    <span className="text-xs font-mono text-cyan-400 font-bold px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/20">
-                      {report.report_code}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono text-cyan-400 font-bold px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/20">
+                        {report.report_code}
+                      </span>
+                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                        {report.category || category || 'Food'}
+                      </span>
+                    </div>
                     <h2 className="text-2xl font-black text-white mt-1.5">{report.product_name}</h2>
-                    <p className="text-xs text-slate-400">Category: {report.category}</p>
                   </div>
 
                   <div className="flex items-center gap-4">
@@ -426,13 +440,19 @@ export const ScanProduct: React.FC = () => {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Product / Commodity Name</label>
-                    <input
-                      type="text"
-                      value={fields.commodity_name || ''}
-                      onChange={(e) => setFields({ ...fields, commodity_name: e.target.value })}
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Product Category</label>
+                    <select
+                      value={fields.category || category || 'Food'}
+                      onChange={(e) => setFields({ ...fields, category: e.target.value })}
                       className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
-                    />
+                    >
+                      <option value="Food">Food</option>
+                      <option value="Cosmetics">Cosmetics</option>
+                      <option value="Household">Household</option>
+                      <option value="Consumer Goods">Consumer Goods</option>
+                      <option value="Imported Goods">Imported Goods</option>
+                      <option value="Other">Other</option>
+                    </select>
                   </div>
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Brand Name</label>
@@ -440,6 +460,15 @@ export const ScanProduct: React.FC = () => {
                       type="text"
                       value={fields.brand || ''}
                       onChange={(e) => setFields({ ...fields, brand: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Product / Commodity Name</label>
+                    <input
+                      type="text"
+                      value={fields.commodity_name || ''}
+                      onChange={(e) => setFields({ ...fields, commodity_name: e.target.value })}
                       className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
                     />
                   </div>

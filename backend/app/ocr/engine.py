@@ -78,6 +78,9 @@ class OCREngine:
         # 3. Parse Legal Metrology Declarations from Real Extracted Text
         fields, mapped_boxes = cls._parse_legal_metrology_fields(raw_text, detected_boxes, width, height)
 
+        # 4. Detect Product Category
+        detected_category = cls.detect_category(raw_text, fields)
+
         # Clean up temp preprocessed image
         if preprocessed_path != image_path and os.path.exists(preprocessed_path):
             try:
@@ -89,8 +92,86 @@ class OCREngine:
             "image_dimensions": {"width": width, "height": height},
             "raw_text": raw_text,
             "fields": fields,
+            "detected_category": detected_category,
             "bounding_boxes": mapped_boxes
         }
+
+    @classmethod
+    def detect_category(cls, raw_text: str, fields: Dict[str, str]) -> str:
+        """
+        Detects product category among:
+        'Food', 'Cosmetics', 'Household', 'Consumer Goods', 'Imported Goods', 'Other'
+        """
+        combined_text = f"{raw_text} {fields.get('commodity_name', '')} {fields.get('brand', '')} {fields.get('importer', '')} {fields.get('country_of_origin', '')}".lower()
+        
+        # 1. Imported Goods
+        importer = fields.get('importer', '').strip()
+        country = fields.get('country_of_origin', '').strip().lower()
+        non_india_countries = [
+            'usa', 'united states', 'uk', 'united kingdom', 'china', 'germany', 
+            'japan', 'france', 'italy', 'thailand', 'vietnam', 'korea', 'taiwan', 
+            'spain', 'mexico', 'brazil', 'canada', 'australia', 'switzerland', 
+            'belgium', 'netherlands', 'indonesia', 'malaysia', 'dubai', 'uae'
+        ]
+        has_imported_mention = any(k in combined_text for k in ['imported by', 'importer', 'country of origin: imported', 'imported & marketed', 'customs duty', 'import details'])
+        is_foreign_country = any(c in country for c in non_india_countries) or ('india' not in country and len(country) > 2 and ('made in' in combined_text or 'origin' in combined_text))
+        
+        if (importer and len(importer) > 2 and importer.lower() != 'none') or has_imported_mention or is_foreign_country:
+            return "Imported Goods"
+
+        # 2. Food
+        food_keywords = [
+            'fssai', 'butter', 'almond', 'peanut', 'cashew', 'biscuit', 'cookie', 'flour', 'atta', 'maida', 
+            'rice', 'wheat', 'oil', 'edible', 'cooking oil', 'ghee', 'milk', 'dairy', 'paneer', 'cheese',
+            'snack', 'chips', 'chocolate', 'candy', 'confectionery', 'sugar', 'salt', 'spice', 'masala',
+            'tea', 'coffee', 'juice', 'beverage', 'drink', 'sauce', 'ketchup', 'pickle', 'jam', 'honey',
+            'noodle', 'pasta', 'cereal', 'oats', 'corn flakes', 'syrup', 'wafer', 'namkeen', 'bakery',
+            'bread', 'cake', 'nutritional info', 'nutrition facts', 'ingredients:', 'energy (kcal)', 
+            'protein (g)', 'carbohydrate', 'fat (g)', 'serving size', 'dietary', 'veg logo', 'non-veg',
+            'food', 'organic', 'granola', 'pulses', 'dal', 'seed', 'dry fruits', 'per 100g', 'per serving'
+        ]
+        if any(k in combined_text for k in food_keywords):
+            return "Food"
+
+        # 3. Cosmetics
+        cosmetics_keywords = [
+            'shampoo', 'conditioner', 'soap', 'body wash', 'face wash', 'face cream', 'lotion', 'moisturizer',
+            'serum', 'perfume', 'fragrance', 'deodorant', 'body spray', 'lipstick', 'lip balm', 'makeup',
+            'sunscreen', 'spf', 'foundation', 'concealer', 'eyeliner', 'mascara', 'nail polish', 'hair oil',
+            'hair dye', 'hair color', 'face mask', 'scrub', 'cleanser', 'toner', 'cosmetic', 'beauty',
+            'skincare', 'haircare', 'dermatologically', 'paraben free', 'sulphate free', 'skin whitening',
+            'anti-aging', 'aloe vera gel', 'essential oil', 'hyaluronic', 'salicylic', 'retinol'
+        ]
+        if any(k in combined_text for k in cosmetics_keywords):
+            return "Cosmetics"
+
+        # 4. Household
+        household_keywords = [
+            'detergent', 'washing powder', 'dishwash', 'dish wash', 'liquid detergent', 'floor cleaner',
+            'toilet cleaner', 'glass cleaner', 'disinfectant', 'surface cleaner', 'bleach', 'fabric conditioner',
+            'fabric softener', 'stain remover', 'mosquito repellent', 'insecticide', 'pest control', 'air freshener',
+            'room spray', 'scrubber', 'sponge', 'mop', 'broom', 'trash bag', 'garbage bag', 'tissue paper',
+            'kitchen roll', 'aluminum foil', 'cling wrap', 'drain cleaner', 'odor eliminator', 'candle',
+            'matches', 'cleaning wipe', 'cleaner'
+        ]
+        if any(k in combined_text for k in household_keywords):
+            return "Household"
+
+        # 5. Consumer Goods
+        consumer_goods_keywords = [
+            'charger', 'cable', 'earphone', 'headphone', 'speaker', 'bluetooth', 'usb', 'power bank',
+            'battery', 'led bulb', 'lamp', 'torch', 'electronic', 'appliance', 'kettle', 'iron', 'trimmer',
+            'dryer', 'fan', 'clock', 'watch', 'calculator', 'pen', 'pencil', 'notebook', 'diary', 'stationery',
+            'bottle', 'flask', 'lunch box', 'container', 'plasticware', 'cookware', 'pan', 'pot', 'utensil',
+            'knife', 'scissors', 'hanger', 't-shirt', 'shirt', 'clothing', 'apparel', 'garment', 'socks',
+            'towel', 'bedsheet', 'blanket', 'shoe', 'footwear', 'sandal', 'slipper', 'tool', 'screwdriver',
+            'wrench', 'tape', 'glue', 'adhesive', 'toy', 'board game', 'sports', 'fitness', 'dumbbell',
+            'yoga mat', 'backpack', 'bag', 'wallet', 'umbrella'
+        ]
+        if any(k in combined_text for k in consumer_goods_keywords):
+            return "Consumer Goods"
+
+        return "Other"
 
     @classmethod
     def _extract_real_text_and_boxes(cls, preprocessed_path: str, original_path: str, width: int, height: int) -> Tuple[str, List[Dict[str, Any]]]:

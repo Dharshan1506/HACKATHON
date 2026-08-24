@@ -80,8 +80,16 @@ async def scan_product(
 
     compliance_analysis = ComplianceAIAnalyzer.analyze(eval_fields)
 
+    detected_cat = ocr_result.get("detected_category", "Food")
+    if not clean_category or clean_category.lower() in ["auto-detect", "auto", "packaged commodity", "general"]:
+        final_category = detected_cat
+    else:
+        final_category = clean_category
+
     extracted_payload = {
         "fields": fields,
+        "category": final_category,
+        "detected_category": detected_cat,
         "raw_text": ocr_result["raw_text"],
         "bounding_boxes": ocr_result["bounding_boxes"],
         "rule_checks": compliance_analysis["rule_checks"],
@@ -95,7 +103,7 @@ async def scan_product(
     
     product = Product(
         name=f"{p_brand} - {p_name}" if p_brand and p_name else (p_name or "Product"),
-        category=clean_category,
+        category=final_category,
         brand=p_brand
     )
     db.add(product)
@@ -136,6 +144,7 @@ async def scan_product(
         "report_code": report.report_code,
         "product_name": product.name,
         "category": product.category,
+        "detected_category": detected_cat,
         "brand": product.brand,
         "compliance_score": scan_result.compliance_score,
         "compliance_status": scan_result.compliance_status,
@@ -178,6 +187,7 @@ async def update_scan(
     report_id: int = Form(...),
     commodity_name: Optional[str] = Form(None),
     brand: Optional[str] = Form(None),
+    category: Optional[str] = Form(None),
     manufacturer_details: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
     mrp: Optional[str] = Form(None),
@@ -227,8 +237,13 @@ async def update_scan(
 
     compliance_analysis = ComplianceAIAnalyzer.analyze(eval_fields)
 
+    existing_cat = scan_result.extracted_data.get("category", "Food")
+    updated_cat = category.strip() if category and category.strip() else existing_cat
+
     extracted_payload = {
         "fields": fields,
+        "category": updated_cat,
+        "detected_category": scan_result.extracted_data.get("detected_category", updated_cat),
         "raw_text": scan_result.extracted_data.get("raw_text", ""),
         "bounding_boxes": scan_result.extracted_data.get("bounding_boxes", []),
         "rule_checks": compliance_analysis["rule_checks"],
@@ -255,6 +270,7 @@ async def update_scan(
         p_brand = fields.get("brand") or "Generic Brand"
         product.name = f"{p_brand} - {p_name}"
         product.brand = p_brand
+        product.category = updated_cat
 
     await db.commit()
 

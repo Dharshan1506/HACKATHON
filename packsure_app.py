@@ -398,44 +398,222 @@ class OCREngine:
 
         raw_text = "\n".join(raw_lines) if raw_lines else "No text detected."
         fields = cls._parse_fields(raw_text, raw_lines)
-        return {"raw_text": raw_text, "fields": fields, "image_dimensions": {"width": width, "height": height}, "bounding_boxes": detected_boxes}
+        detected_category = cls.detect_category(raw_text, fields)
+        return {
+            "raw_text": raw_text, 
+            "fields": fields, 
+            "detected_category": detected_category,
+            "image_dimensions": {"width": width, "height": height}, 
+            "bounding_boxes": detected_boxes
+        }
+
+    @classmethod
+    def detect_category(cls, raw_text: str, fields: Dict[str, str]) -> str:
+        """
+        Detects product category among:
+        'Food', 'Cosmetics', 'Household', 'Consumer Goods', 'Imported Goods', 'Other'
+        """
+        combined_text = f"{raw_text} {fields.get('commodity_name', '')} {fields.get('brand', '')} {fields.get('importer', '')} {fields.get('country_of_origin', '')}".lower()
+        
+        # 1. Imported Goods
+        importer = fields.get('importer', '').strip()
+        country = fields.get('country_of_origin', '').strip().lower()
+        non_india_countries = [
+            'usa', 'united states', 'uk', 'united kingdom', 'china', 'germany', 
+            'japan', 'france', 'italy', 'thailand', 'vietnam', 'korea', 'taiwan', 
+            'spain', 'mexico', 'brazil', 'canada', 'australia', 'switzerland', 
+            'belgium', 'netherlands', 'indonesia', 'malaysia', 'dubai', 'uae'
+        ]
+        has_imported_mention = any(k in combined_text for k in ['imported by', 'importer', 'country of origin: imported', 'imported & marketed', 'customs duty', 'import details'])
+        is_foreign_country = any(c in country for c in non_india_countries) or ('india' not in country and len(country) > 2 and ('made in' in combined_text or 'origin' in combined_text))
+        
+        if (importer and len(importer) > 2 and importer.lower() != 'none') or has_imported_mention or is_foreign_country:
+            return "Imported Goods"
+
+        # 2. Food
+        food_keywords = [
+            'fssai', 'butter', 'almond', 'peanut', 'cashew', 'biscuit', 'cookie', 'flour', 'atta', 'maida', 
+            'rice', 'wheat', 'oil', 'edible', 'cooking oil', 'ghee', 'milk', 'dairy', 'paneer', 'cheese',
+            'snack', 'chips', 'chocolate', 'candy', 'confectionery', 'sugar', 'salt', 'spice', 'masala',
+            'tea', 'coffee', 'juice', 'beverage', 'drink', 'sauce', 'ketchup', 'pickle', 'jam', 'honey',
+            'noodle', 'pasta', 'cereal', 'oats', 'corn flakes', 'syrup', 'wafer', 'namkeen', 'bakery',
+            'bread', 'cake', 'nutritional info', 'nutrition facts', 'ingredients:', 'energy (kcal)', 
+            'protein (g)', 'carbohydrate', 'fat (g)', 'serving size', 'dietary', 'veg logo', 'non-veg',
+            'food', 'organic', 'granola', 'pulses', 'dal', 'seed', 'dry fruits', 'per 100g', 'per serving'
+        ]
+        if any(k in combined_text for k in food_keywords):
+            return "Food"
+
+        # 3. Cosmetics
+        cosmetics_keywords = [
+            'shampoo', 'conditioner', 'soap', 'body wash', 'face wash', 'face cream', 'lotion', 'moisturizer',
+            'serum', 'perfume', 'fragrance', 'deodorant', 'body spray', 'lipstick', 'lip balm', 'makeup',
+            'sunscreen', 'spf', 'foundation', 'concealer', 'eyeliner', 'mascara', 'nail polish', 'hair oil',
+            'hair dye', 'hair color', 'face mask', 'scrub', 'cleanser', 'toner', 'cosmetic', 'beauty',
+            'skincare', 'haircare', 'dermatologically', 'paraben free', 'sulphate free', 'skin whitening',
+            'anti-aging', 'aloe vera gel', 'essential oil', 'hyaluronic', 'salicylic', 'retinol'
+        ]
+        if any(k in combined_text for k in cosmetics_keywords):
+            return "Cosmetics"
+
+        # 4. Household
+        household_keywords = [
+            'detergent', 'washing powder', 'dishwash', 'dish wash', 'liquid detergent', 'floor cleaner',
+            'toilet cleaner', 'glass cleaner', 'disinfectant', 'surface cleaner', 'bleach', 'fabric conditioner',
+            'fabric softener', 'stain remover', 'mosquito repellent', 'insecticide', 'pest control', 'air freshener',
+            'room spray', 'scrubber', 'sponge', 'mop', 'broom', 'trash bag', 'garbage bag', 'tissue paper',
+            'kitchen roll', 'aluminum foil', 'cling wrap', 'drain cleaner', 'odor eliminator', 'candle',
+            'matches', 'cleaning wipe', 'cleaner'
+        ]
+        if any(k in combined_text for k in household_keywords):
+            return "Household"
+
+        # 5. Consumer Goods
+        consumer_goods_keywords = [
+            'charger', 'cable', 'earphone', 'headphone', 'speaker', 'bluetooth', 'usb', 'power bank',
+            'battery', 'led bulb', 'lamp', 'torch', 'electronic', 'appliance', 'kettle', 'iron', 'trimmer',
+            'dryer', 'fan', 'clock', 'watch', 'calculator', 'pen', 'pencil', 'notebook', 'diary', 'stationery',
+            'bottle', 'flask', 'lunch box', 'container', 'plasticware', 'cookware', 'pan', 'pot', 'utensil',
+            'knife', 'scissors', 'hanger', 't-shirt', 'shirt', 'clothing', 'apparel', 'garment', 'socks',
+            'towel', 'bedsheet', 'blanket', 'shoe', 'footwear', 'sandal', 'slipper', 'tool', 'screwdriver',
+            'wrench', 'tape', 'glue', 'adhesive', 'toy', 'board game', 'sports', 'fitness', 'dumbbell',
+            'yoga mat', 'backpack', 'bag', 'wallet', 'umbrella'
+        ]
+        if any(k in combined_text for k in consumer_goods_keywords):
+            return "Consumer Goods"
+
+        return "Other"
 
     @classmethod
     def _parse_fields(cls, raw_text: str, lines: List[str]) -> Dict[str, str]:
-        fields = {"commodity_name": "", "brand": "", "net_quantity": "", "mrp": "", "unit_sale_price": "", "mfg_date": "", "expiry_date": "", "manufacturer_details": "", "customer_care": "", "country_of_origin": ""}
+        fields = {
+            "commodity_name": "", "brand": "", "manufacturer_details": "", "address": "",
+            "mrp": "", "net_quantity": "", "mfg_date": "", "expiry_date": "",
+            "importer": "", "country_of_origin": "", "customer_care": "", "unit_sale_price": ""
+        }
         
-        # Net Qty
-        m = re.search(r'(\b\d+(\.\d+)?\s*(?:g|kg|ml|l|ltr|grams|n|pcs|units)\b)', raw_text, re.I)
-        if m: fields["net_quantity"] = m.group(1).strip()
-        
+        raw_lower = raw_text.lower()
+
+        def find_after_prefix(keywords: List[str], text_str: str) -> str:
+            for line in text_str.split("\n"):
+                for kw in keywords:
+                    if kw.lower() in line.lower():
+                        idx = line.lower().find(kw.lower())
+                        extracted = line[idx + len(kw):].strip(" :.-=,")
+                        if extracted and len(extracted) > 1:
+                            return extracted
+            return ""
+
+        # Extract brand
+        brand_keywords = ["brand name", "brand", "tm", "regd tm"]
+        fields["brand"] = find_after_prefix(brand_keywords, raw_text)
+        if not fields["brand"] and lines:
+            for l in lines[:3]:
+                if "brand" in l.lower():
+                    fields["brand"] = l.split(":")[-1].strip()
+                    break
+            if not fields["brand"] and lines:
+                fields["brand"] = lines[0][:40]
+
+        # Extract product/commodity name
+        commodity_keywords = ["commodity name", "commodity", "product name", "product"]
+        fields["commodity_name"] = find_after_prefix(commodity_keywords, raw_text)
+        if not fields["commodity_name"] and len(lines) > 1:
+            for l in lines[1:4]:
+                if not any(c.isdigit() for c in l) and len(l) > 5:
+                    fields["commodity_name"] = l[:60]
+                    break
+            if not fields["commodity_name"]:
+                fields["commodity_name"] = lines[1][:60] if len(lines) > 1 else lines[0][:60]
+
+        # Extract manufacturer name
+        mfg_keywords = ["manufactured by", "mfd by", "packed by", "mfd & packed by", "manufactured & packed by", "packed and manufactured by"]
+        fields["manufacturer_details"] = find_after_prefix(mfg_keywords, raw_text)
+        if not fields["manufacturer_details"]:
+            for l in lines:
+                if any(k in l.lower() for k in ["mfd by", "manufactured by", "packed by", "mfg by"]):
+                    fields["manufacturer_details"] = l.split(":")[-1].strip()
+                    break
+            if not fields["manufacturer_details"]:
+                for l in lines:
+                    if any(k in l.lower() for k in ["pvt ltd", "private limited", "ltd", "corp", "inc"]):
+                        fields["manufacturer_details"] = l
+                        break
+
+        # Extract address
+        address_parts = []
+        for l in lines:
+            l_lower = l.lower()
+            if any(k in l_lower for k in ["plot no", "industrial estate", "industrial area", "road", "street", "lane", "phase", "sector", "building", "floor", "nagar", "ward", "pin code", "pincode"]):
+                address_parts.append(l)
+            elif re.search(r'\b\d{6}\b', l):
+                address_parts.append(l)
+        if address_parts:
+            seen = set()
+            unique_parts = []
+            for part in address_parts:
+                part_clean = part.strip(" ,.-")
+                if part_clean not in seen:
+                    seen.add(part_clean)
+                    unique_parts.append(part_clean)
+            fields["address"] = ", ".join(unique_parts)
+
+        # Extract importer
+        importer_keywords = ["imported by", "importer", "imported & marketed by", "import details"]
+        fields["importer"] = find_after_prefix(importer_keywords, raw_text)
+        if not fields["importer"]:
+            for l in lines:
+                if "imported" in l.lower() or "importer" in l.lower():
+                    fields["importer"] = l.split(":")[-1].strip()
+                    break
+
+        # Country of origin
+        origin_keywords = ["country of origin", "made in", "origin", "product of"]
+        fields["country_of_origin"] = find_after_prefix(origin_keywords, raw_text)
+        if not fields["country_of_origin"]:
+            for l in lines:
+                if "origin" in l.lower() or "made in" in l.lower():
+                    fields["country_of_origin"] = l.split(":")[-1].strip()
+                    break
+        if not fields["country_of_origin"] and "india" in raw_lower:
+            fields["country_of_origin"] = "India"
+
+        # Customer care
+        cc_keywords = ["customer care", "consumer care", "care cell", "complaints", "feedback", "helpline", "toll free", "toll-free"]
+        fields["customer_care"] = find_after_prefix(cc_keywords, raw_text)
+        if not fields["customer_care"]:
+            for l in lines:
+                if any(k in l.lower() for k in ["care", "customer", "helpline", "email", "@", "complaint"]):
+                    fields["customer_care"] = l
+                    break
+
         # MRP
-        m = re.search(r'((?:mrp|m\.r\.p|price|₹|rs\.?)\s*[:.-]?\s*(?:rs\.?|₹)?\s*\d+(?:\.\d{2})?(?:\s*(?:\(?[^)\n]*incl[^)\n]*\)?))?)', raw_text, re.I)
-        if m and m.group(1).strip(): fields["mrp"] = m.group(1).strip()
-        
-        # USP
-        m = re.search(r'((?:usp|unit\s*price|₹\s*\/?\s*g|rs\.?\s*\/?\s*g)\s*[:.-]?\s*(?:rs\.?|₹)?\s*\d+(?:\.\d{2})?\s*(?:per|\/)\s*(?:g|kg|ml|l|unit|piece|n))', raw_text, re.I)
-        if m: fields["unit_sale_price"] = m.group(1).strip()
-        
+        mrp_match = re.search(r'((?:mrp|m\.r\.p|price|₹|rs\.?)\s*[:.-]?\s*(?:rs\.?|₹)?\s*\d+(?:\.\d{2})?(?:\s*(?:\(?[^)\n]*incl[^)\n]*\)?))?)', raw_text, re.I)
+        if mrp_match and mrp_match.group(1).strip():
+            fields["mrp"] = mrp_match.group(1).strip()
+
+        # Net Quantity
+        qty_match = re.search(r'(\b\d+(\.\d+)?\s*(?:g|kg|ml|l|ltr|grams|n|pcs|units)\b)', raw_text, re.I)
+        if qty_match:
+            fields["net_quantity"] = qty_match.group(1).strip()
+
         # Mfg Date
-        m = re.search(r'((?:mfg|mfd|packed|pkd)\s*[:.-]?\s*(?:[0-3]?[0-9][\/\-.])?[0-1]?[0-9][\/\-.][1-2][0-9]{3}|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,.-]+[1-2][0-9]{3})', raw_text, re.I)
-        if m: fields["mfg_date"] = m.group(1).strip()
+        mfg_match = re.search(r'((?:mfg|mfd|packed|pkd)\s*[:.-]?\s*(?:[0-3]?[0-9][\/\-.])?[0-1]?[0-9][\/\-.][1-2][0-9]{3}|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,.-]+[1-2][0-9]{3})', raw_text, re.I)
+        if mfg_match:
+            fields["mfg_date"] = mfg_match.group(1).strip()
 
-        # Manufacturer
-        for l in lines:
-            if any(k in l.lower() for k in ["mfd by", "manufactured by", "packed by", "pvt ltd", "limited", "industries", "estate"]):
-                fields["manufacturer_details"] = l
-                break
+        # Best before / Expiry
+        exp_keywords = ["best before", "expiry date", "exp date", "expiry", "exp", "use by"]
+        fields["expiry_date"] = find_after_prefix(exp_keywords, raw_text)
+        if not fields["expiry_date"]:
+            exp_match = re.search(r'((?:exp|expiry|use\s*before|best\s*before)\s*[:.-]?\s*(?:[0-3]?[0-9][\/\-.])?[0-1]?[0-9][\/\-.][1-2][0-9]{3}|\d+\s*months?)', raw_text, re.I)
+            if exp_match:
+                fields["expiry_date"] = exp_match.group(1).strip()
 
-        # Customer Care
-        for l in lines:
-            if any(k in l.lower() for k in ["care", "customer", "helpline", "email", "@", "complaint"]):
-                fields["customer_care"] = l
-                break
-
-        # Commodity / Brand
-        if lines:
-            fields["brand"] = lines[0][:40]
-            fields["commodity_name"] = lines[1][:60] if len(lines) > 1 else lines[0][:60]
+        # Unit sale price
+        usp_match = re.search(r'((?:usp|unit\s*price|₹\s*\/?\s*g|rs\.?\s*\/?\s*g)\s*[:.-]?\s*(?:rs\.?|₹)?\s*\d+(?:\.\d{2})?\s*(?:per|\/)\s*(?:g|kg|ml|l|unit|piece|n))', raw_text, re.I)
+        if usp_match:
+            fields["unit_sale_price"] = usp_match.group(1).strip()
 
         return fields
 
@@ -534,7 +712,7 @@ async def run_dedicated_ocr(file: UploadFile = File(...)):
 async def scan(
     file: UploadFile = File(...),
     product_name: Optional[str] = Form(None),
-    category: Optional[str] = Form("Packaged Food"),
+    category: Optional[str] = Form("Auto-Detect"),
     db: AsyncSession = Depends(get_db)
 ):
     ext = os.path.splitext(file.filename)[1] or ".jpg"
@@ -549,6 +727,14 @@ async def scan(
     fields = ocr_res["fields"]
     if product_name and product_name.strip():
         fields["commodity_name"] = product_name.strip()
+
+    # Category Detection
+    detected_cat = ocr_res.get("detected_category", "Food")
+    clean_cat = category.strip() if category and category.strip() else ""
+    if not clean_cat or clean_cat.lower() in ["auto-detect", "auto", "packaged food", "general"]:
+        final_category = detected_cat
+    else:
+        final_category = clean_cat
 
     # Combine manufacturer details, address and importer for rule evaluation
     eval_fields = fields.copy()
@@ -565,15 +751,25 @@ async def scan(
     
     summary = f"Audit evaluated with score {eval_res['score']}% ({eval_res['status']}). Enforces Legal Metrology Rules 2011."
     
-    product = Product(name=f"{p_brand} - {p_name}", category=category or "Packaged Food", brand=p_brand)
+    product = Product(name=f"{p_brand} - {p_name}", category=final_category, brand=p_brand)
     db.add(product)
     await db.flush()
+
+    extracted_payload = {
+        "fields": fields,
+        "category": final_category,
+        "detected_category": detected_cat,
+        "raw_text": ocr_res["raw_text"],
+        "bounding_boxes": ocr_res["bounding_boxes"],
+        "rule_checks": eval_res["rule_checks"],
+        "summary": summary
+    }
 
     scan_res = ScanResult(
         product_id=product.id,
         image_url=f"/uploads/{unique_fn}",
         image_filename=unique_fn,
-        extracted_data={"fields": fields, "raw_text": ocr_res["raw_text"], "bounding_boxes": ocr_res["bounding_boxes"], "rule_checks": eval_res["rule_checks"], "summary": summary},
+        extracted_data=extracted_payload,
         compliance_score=eval_res["score"],
         compliance_status=eval_res["status"],
         risk_level=eval_res["risk_level"]
@@ -601,6 +797,7 @@ async def scan(
         "report_code": report_code,
         "product_name": product.name,
         "category": product.category,
+        "detected_category": detected_cat,
         "compliance_score": scan_res.compliance_score,
         "compliance_status": scan_res.compliance_status,
         "risk_level": scan_res.risk_level,
@@ -616,6 +813,7 @@ async def update_scan(
     report_id: int = Form(...),
     commodity_name: Optional[str] = Form(None),
     brand: Optional[str] = Form(None),
+    category: Optional[str] = Form(None),
     manufacturer_details: Optional[str] = Form(None),
     address: Optional[str] = Form(None),
     mrp: Optional[str] = Form(None),
@@ -667,8 +865,13 @@ async def update_scan(
 
     summary = f"Audit evaluated with score {eval_res['score']}% ({eval_res['status']}). Enforces Legal Metrology Rules 2011."
 
+    existing_cat = scan_result.extracted_data.get("category", "Food")
+    updated_cat = category.strip() if category and category.strip() else existing_cat
+
     extracted_payload = {
         "fields": fields,
+        "category": updated_cat,
+        "detected_category": scan_result.extracted_data.get("detected_category", updated_cat),
         "raw_text": scan_result.extracted_data.get("raw_text", ""),
         "bounding_boxes": scan_result.extracted_data.get("bounding_boxes", []),
         "rule_checks": eval_res["rule_checks"],
@@ -694,6 +897,7 @@ async def update_scan(
         p_brand = fields.get("brand") or "Generic Brand"
         product.name = f"{p_brand} - {p_name}"
         product.brand = p_brand
+        product.category = updated_cat
 
     await db.commit()
 
@@ -722,6 +926,8 @@ async def update_scan(
         "scan_id": scan_result.id,
         "report_code": report.report_code,
         "product_name": product.name if product else report.title,
+        "category": product.category if product else updated_cat,
+        "detected_category": scan_result.extracted_data.get("detected_category", updated_cat),
         "compliance_score": scan_result.compliance_score,
         "compliance_status": scan_result.compliance_status,
         "risk_level": scan_result.risk_level,
@@ -910,12 +1116,15 @@ async def index_ui():
               <input type="text" id="p-name" placeholder="e.g. Refined Sunflower Cooking Oil" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-sm focus:outline-none focus:border-cyan-500">
             </div>
             <div>
-              <label class="block text-xs font-semibold text-slate-300 mb-1">Category</label>
+              <label class="block text-xs font-semibold text-slate-300 mb-1">Product Category</label>
               <select id="p-category" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-800 text-sm focus:outline-none focus:border-cyan-500">
-                <option>Packaged Food</option>
-                <option>Dairy & Beverages</option>
-                <option>Cosmetics & Personal Care</option>
-                <option>General Goods</option>
+                <option value="Auto-Detect">Auto-Detect (AI Classification)</option>
+                <option value="Food">Food</option>
+                <option value="Cosmetics">Cosmetics</option>
+                <option value="Household">Household</option>
+                <option value="Consumer Goods">Consumer Goods</option>
+                <option value="Imported Goods">Imported Goods</option>
+                <option value="Other">Other</option>
               </select>
             </div>
             <button id="scan-btn" onclick="startScan()" class="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 font-bold text-sm text-white shadow-lg shadow-cyan-500/20 hover:scale-[1.02] transition-all">
@@ -936,7 +1145,10 @@ async def index_ui():
             <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-4">
               <div class="flex items-start justify-between border-b border-slate-800 pb-4">
                 <div>
-                  <span id="res-code" class="text-xs font-mono text-cyan-400 font-bold"></span>
+                  <div class="flex items-center gap-2">
+                    <span id="res-code" class="text-xs font-mono text-cyan-400 font-bold"></span>
+                    <span id="res-category" class="text-[11px] px-2.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-400 font-semibold border border-indigo-500/20"></span>
+                  </div>
                   <h3 id="res-name" class="text-xl font-bold text-white mt-0.5"></h3>
                 </div>
                 <div class="text-right">
@@ -978,12 +1190,23 @@ async def index_ui():
               
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Product / Commodity Name</label>
-                  <input type="text" id="edit-commodity_name" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Product Category</label>
+                  <select id="edit-category" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                    <option value="Food">Food</option>
+                    <option value="Cosmetics">Cosmetics</option>
+                    <option value="Household">Household</option>
+                    <option value="Consumer Goods">Consumer Goods</option>
+                    <option value="Imported Goods">Imported Goods</option>
+                    <option value="Other">Other</option>
+                  </select>
                 </div>
                 <div>
                   <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Brand Name</label>
                   <input type="text" id="edit-brand" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Product / Commodity Name</label>
+                  <input type="text" id="edit-commodity_name" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
                 </div>
                 <div>
                   <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Manufacturer Name</label>
@@ -1036,6 +1259,10 @@ async def index_ui():
               <h4 class="text-sm font-bold text-white">7 Mandatory Declarations Audit Breakdown</h4>
               <div id="rules-list" class="space-y-3"></div>
             </div>
+          </div>
+        </div>
+      </div>
+    </div>
           </div>
         </div>
       </div>
@@ -1129,6 +1356,7 @@ async def index_ui():
 
         document.getElementById('res-code').innerText = data.report_code;
         document.getElementById('res-name').innerText = data.product_name;
+        document.getElementById('res-category').innerText = 'Category: ' + (data.category || data.detected_category || 'Other');
         document.getElementById('res-score').innerText = data.compliance_score + '%';
         
         const stEl = document.getElementById('res-status');
@@ -1142,6 +1370,7 @@ async def index_ui():
         // Populate Review & Corrections Form
         const fields = data.details?.fields || {};
         document.getElementById('edit-report-id').value = data.id;
+        document.getElementById('edit-category').value = data.category || data.detected_category || 'Food';
         document.getElementById('edit-commodity_name').value = fields.commodity_name || '';
         document.getElementById('edit-brand').value = fields.brand || '';
         document.getElementById('edit-manufacturer_details').value = fields.manufacturer_details || '';
@@ -1220,6 +1449,7 @@ async def index_ui():
       try {
         const formData = new FormData();
         formData.append('report_id', reportId);
+        formData.append('category', document.getElementById('edit-category').value);
         
         const fieldNames = [
           'commodity_name', 'brand', 'manufacturer_details', 'address',
@@ -1236,6 +1466,7 @@ async def index_ui():
         const data = await res.json();
         
         document.getElementById('res-name').innerText = data.product_name;
+        document.getElementById('res-category').innerText = 'Category: ' + (data.category || data.detected_category || 'Other');
         document.getElementById('res-score').innerText = data.compliance_score + '%';
         
         const stEl = document.getElementById('res-status');
