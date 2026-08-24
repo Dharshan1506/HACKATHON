@@ -430,6 +430,28 @@ export const ScanProduct: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Priority Severity Breakdown Row */}
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Prioritized Violations Breakdown:</span>
+                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="px-2.5 py-1 rounded-lg bg-rose-500/15 text-rose-300 border border-rose-500/30 font-extrabold text-[10px] uppercase tracking-wider">
+                      {report.critical_violations_count || (report.details as any)?.critical_violations_count || (report.details?.rule_checks || []).filter(r => r.priority === 'CRITICAL' && r.status !== 'PASS').length} CRITICAL
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-orange-500/15 text-orange-300 border border-orange-500/30 font-extrabold text-[10px] uppercase tracking-wider">
+                      {report.high_violations_count || (report.details as any)?.high_violations_count || (report.details?.rule_checks || []).filter(r => r.priority === 'HIGH' && r.status !== 'PASS').length} HIGH
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 font-extrabold text-[10px] uppercase tracking-wider">
+                      {report.medium_violations_count || (report.details as any)?.medium_violations_count || (report.details?.rule_checks || []).filter(r => r.priority === 'MEDIUM' && r.status !== 'PASS').length} MEDIUM
+                    </span>
+                    <span className="px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/30 font-extrabold text-[10px] uppercase tracking-wider">
+                      {report.low_violations_count || (report.details as any)?.low_violations_count || (report.details?.rule_checks || []).filter(r => r.priority === 'LOW' && r.status !== 'PASS').length} LOW
+                    </span>
+                  </div>
+                </div>
+
                 {/* Actions & Export */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
                   <button
@@ -665,9 +687,20 @@ export const ScanProduct: React.FC = () => {
                   {ruleChecks.map((check) => (
                     <div key={check.rule_id} className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition-colors space-y-2.5">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-mono font-bold text-cyan-400 px-2 py-0.5 rounded bg-cyan-500/10">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs font-mono font-bold text-cyan-400 px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">
                             {check.rule_code}
+                          </span>
+                          <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase border tracking-wider ${
+                            check.priority === 'CRITICAL'
+                              ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                              : check.priority === 'HIGH'
+                                ? 'bg-orange-500/20 text-orange-300 border-orange-500/40'
+                                : check.priority === 'MEDIUM'
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                                  : 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                          }`}>
+                            {check.priority || 'LOW'} PRIORITY
                           </span>
                           <span className="font-bold text-white text-sm">{check.title}</span>
                         </div>

@@ -180,6 +180,45 @@ class LegalMetrologyRulesEngine:
             }
 
     @classmethod
+    def classify_priority(cls, rule_id: str, status: str, is_missing: bool = False, finding: str = "", category: str = "ALL") -> str:
+        """
+        Classifies compliance issues into 4 prioritized levels:
+        - CRITICAL: Missing core mandatory declarations (Manufacturer, MRP, Net Qty, Commodity Name, Origin on Imports, Mfg Date) or prohibited non-metric units (lbs/oz).
+        - HIGH: Serious violations, missing USP, missing Consumer Care, missing Expiry on perishable/cosmetics, or major formatting errors.
+        - MEDIUM: Manual review items, ambiguous licensing/contract statements, missing tax statements on MRP, partial address.
+        - LOW: Minor formatting warnings (missing whitespace in '350g', partial consumer contact), or compliant (PASS) checks.
+        """
+        if status == "PASS":
+            return "LOW"
+
+        critical_core_rules = ["RULE_6_1_A", "RULE_6_1_B", "RULE_6_1_C", "RULE_6_1_D", "RULE_6_1_E", "RULE_6_1_G"]
+        
+        # Missing core mandatory declarations or prohibited non-metric units -> CRITICAL
+        if (is_missing and rule_id in critical_core_rules) or "prohibited" in finding.lower() or "non-metric" in finding.lower():
+            return "CRITICAL"
+
+        # Serious violations on core declarations -> CRITICAL
+        if status == "FAIL":
+            if rule_id in critical_core_rules:
+                return "CRITICAL"
+            # Missing USP, Customer Care, Expiry Date -> HIGH
+            return "HIGH"
+
+        # Manual review items -> MEDIUM
+        if status == "MANUAL REVIEW":
+            return "MEDIUM"
+
+        # Warnings
+        if status == "WARNING":
+            # Missing tax inclusivity phrase or partial address / non-standard month format -> MEDIUM
+            if rule_id in ["RULE_6_1_A", "RULE_6_1_E", "RULE_6_1_D"]:
+                return "MEDIUM"
+            # Minor whitespace formatting (e.g. '350g') or partial consumer care -> LOW
+            return "LOW"
+
+        return "LOW"
+
+    @classmethod
     def validate_extracted_data(cls, extracted_data: Dict[str, Any], category: str = "ALL") -> Dict[str, Any]:
         applicable_rules = RulesRegistry.get_applicable_rules(category)
         results: List[Dict[str, Any]] = []
@@ -189,10 +228,14 @@ class LegalMetrologyRulesEngine:
         for rule in applicable_rules:
             field_name = rule["field"]
             field_value = str(extracted_data.get(field_name, "") or "").strip()
+            is_missing = not field_value or field_value.lower() in ["none", "null", "n/a", "not declared"]
             
             check_result = cls._evaluate_single_rule(rule, field_value, extracted_data, category)
             status = check_result["status"]  # PASS, FAIL, WARNING, MANUAL REVIEW
             score_fraction = check_result["score_fraction"]
+            finding = check_result["finding"]
+            
+            priority = cls.classify_priority(rule["id"], status, is_missing=is_missing, finding=finding, category=category)
             
             weight = rule.get("weight", 10)
             rule_earned = weight * score_fraction
@@ -207,12 +250,26 @@ class LegalMetrologyRulesEngine:
                 "field": field_name,
                 "value": field_value if field_value else None,
                 "status": status,
-                "severity": rule.get("severity", "MAJOR"),
+                "priority": priority,
+                "severity": priority,
                 "weight": weight,
                 "score_earned": round(rule_earned, 2),
-                "finding": check_result["finding"],
+                "finding": finding,
                 "remediation": check_result["remediation"]
             })
+
+        # Priority and Status sort orders for deterministic sorting (Highest priority to lowest)
+        priority_map = {"CRITICAL": 1, "HIGH": 2, "MEDIUM": 3, "LOW": 4}
+        status_map = {"FAIL": 1, "WARNING": 2, "MANUAL REVIEW": 3, "PASS": 4}
+
+        # Sort violations and all checks from highest priority to lowest priority
+        results.sort(
+            key=lambda r: (
+                priority_map.get(r.get("priority", "LOW"), 5),
+                status_map.get(r.get("status", "PASS"), 5),
+                -r.get("weight", 0)
+            )
+        )
 
         # Formula: Score = Passed Rule Weight / Total Applicable Rule Weight * 100
         final_score = round((earned_score / total_possible) * 100.0, 1) if total_possible > 0 else 0.0
@@ -225,6 +282,15 @@ class LegalMetrologyRulesEngine:
         warnings_count = sum(1 for r in results if r["status"] == "WARNING")
         violations_count = sum(1 for r in results if r["status"] == "FAIL")
         manual_review_count = sum(1 for r in results if r["status"] == "MANUAL REVIEW")
+
+        # Priority Counts
+        critical_violations_count = sum(1 for r in results if r["priority"] == "CRITICAL" and r["status"] != "PASS")
+        high_violations_count = sum(1 for r in results if r["priority"] == "HIGH" and r["status"] != "PASS")
+        medium_violations_count = sum(1 for r in results if r["priority"] == "MEDIUM" and r["status"] != "PASS")
+        low_violations_count = sum(1 for r in results if r["priority"] == "LOW" and r["status"] != "PASS")
+
+        # Filter prioritized violations only (issues requiring attention)
+        prioritized_violations = [r for r in results if r["status"] in ["FAIL", "WARNING", "MANUAL REVIEW"]]
 
         # Generate deterministic summary based on tier and counts
         summary = cls._generate_deterministic_summary(final_score, compliance_status, passed_count, warnings_count, violations_count, manual_review_count)
@@ -242,6 +308,11 @@ class LegalMetrologyRulesEngine:
             "warnings_count": warnings_count,
             "violations_count": violations_count,
             "manual_review_count": manual_review_count,
+            "critical_violations_count": critical_violations_count,
+            "high_violations_count": high_violations_count,
+            "medium_violations_count": medium_violations_count,
+            "low_violations_count": low_violations_count,
+            "prioritized_violations": prioritized_violations,
             "summary": summary,
             "rule_checks": results
         }

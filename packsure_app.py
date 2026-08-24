@@ -188,6 +188,45 @@ class LegalMetrologyRulesEngine:
             }
 
     @classmethod
+    def classify_priority(cls, rule_id: str, status: str, is_missing: bool = False, finding: str = "", category: str = "ALL") -> str:
+        """
+        Classifies compliance issues into 4 prioritized severity levels:
+        - CRITICAL: Missing core mandatory declarations (Manufacturer, MRP, Net Qty, Commodity Name, Origin on Imports, Mfg Date) or prohibited units (lbs/oz).
+        - HIGH: Serious violations, missing USP, missing Consumer Care, missing Expiry on perishable/cosmetics, or major formatting errors.
+        - MEDIUM: Manual review items, ambiguous licensing/contract statements, missing tax statements on MRP, partial address.
+        - LOW: Minor formatting warnings (missing whitespace in '350g', partial consumer contact), or compliant (PASS) checks.
+        """
+        if status == "PASS":
+            return "LOW"
+
+        critical_core_rules = ["RULE_6_1_A", "RULE_6_1_B", "RULE_6_1_C", "RULE_6_1_D", "RULE_6_1_E", "RULE_6_1_G"]
+        
+        # Missing core mandatory declarations or prohibited non-metric units -> CRITICAL
+        if (is_missing and rule_id in critical_core_rules) or "prohibited" in finding.lower() or "non-metric" in finding.lower():
+            return "CRITICAL"
+
+        # Serious violations on core declarations -> CRITICAL
+        if status == "FAIL":
+            if rule_id in critical_core_rules:
+                return "CRITICAL"
+            # Missing USP, Customer Care, Expiry Date -> HIGH
+            return "HIGH"
+
+        # Manual review items -> MEDIUM
+        if status == "MANUAL REVIEW":
+            return "MEDIUM"
+
+        # Warnings
+        if status == "WARNING":
+            # Missing tax inclusivity phrase or partial address / non-standard month format -> MEDIUM
+            if rule_id in ["RULE_6_1_A", "RULE_6_1_E", "RULE_6_1_D"]:
+                return "MEDIUM"
+            # Minor whitespace formatting (e.g. '350g') or partial consumer care -> LOW
+            return "LOW"
+
+        return "LOW"
+
+    @classmethod
     def validate(cls, data: Dict[str, Any], category: str = "ALL") -> Dict[str, Any]:
         rules = RulesRegistry.get_rules(category)
         results = []
@@ -196,7 +235,13 @@ class LegalMetrologyRulesEngine:
 
         for rule in rules:
             val = str(data.get(rule["field"], "") or "").strip()
+            is_missing = not val or val.lower() in ["none", "null", "n/a", "not declared"]
+            
             res = cls._check_rule(rule, val, data, category)
+            status_val = res["status"]
+            finding_val = res["finding"]
+            
+            priority = cls.classify_priority(rule["id"], status_val, is_missing=is_missing, finding=finding_val, category=category)
             score_earned = rule.get("weight", 10) * res["fraction"]
             earned += score_earned
 
@@ -208,12 +253,27 @@ class LegalMetrologyRulesEngine:
                 "description": rule.get("description", ""),
                 "field": rule["field"],
                 "value": val if val else None,
-                "status": res["status"],  # PASS, FAIL, WARNING, MANUAL REVIEW
+                "status": status_val,  # PASS, FAIL, WARNING, MANUAL REVIEW
+                "priority": priority,   # CRITICAL, HIGH, MEDIUM, LOW
+                "severity": priority,
                 "weight": rule.get("weight", 10),
                 "score_earned": round(score_earned, 2),
-                "finding": res["finding"],
+                "finding": finding_val,
                 "remediation": res["remediation"]
             })
+
+        # Priority map and Status map for sorting (Highest priority to lowest)
+        priority_order = {"CRITICAL": 1, "HIGH": 2, "MEDIUM": 3, "LOW": 4}
+        status_order = {"FAIL": 1, "WARNING": 2, "MANUAL REVIEW": 3, "PASS": 4}
+
+        # Sort violations and rule checks from highest priority to lowest priority
+        results.sort(
+            key=lambda r: (
+                priority_order.get(r.get("priority", "LOW"), 5),
+                status_order.get(r.get("status", "PASS"), 5),
+                -r.get("weight", 0)
+            )
+        )
 
         # Formula: Score = Passed Rule Weight / Total Applicable Rule Weight * 100
         final_score = round((earned / total) * 100.0, 1) if total > 0 else 0.0
@@ -225,6 +285,15 @@ class LegalMetrologyRulesEngine:
         warnings_count = sum(1 for r in results if r["status"] == "WARNING")
         violations_count = sum(1 for r in results if r["status"] == "FAIL")
         manual_review_count = sum(1 for r in results if r["status"] == "MANUAL REVIEW")
+
+        # Priority Counts
+        critical_violations_count = sum(1 for r in results if r["priority"] == "CRITICAL" and r["status"] != "PASS")
+        high_violations_count = sum(1 for r in results if r["priority"] == "HIGH" and r["status"] != "PASS")
+        medium_violations_count = sum(1 for r in results if r["priority"] == "MEDIUM" and r["status"] != "PASS")
+        low_violations_count = sum(1 for r in results if r["priority"] == "LOW" and r["status"] != "PASS")
+
+        # Filter prioritized violations
+        prioritized_violations = [r for r in results if r["status"] in ["FAIL", "WARNING", "MANUAL REVIEW"]]
 
         summary = cls._generate_summary(final_score, status, passed_count, warnings_count, violations_count, manual_review_count)
 
@@ -241,6 +310,11 @@ class LegalMetrologyRulesEngine:
             "warnings_count": warnings_count,
             "violations_count": violations_count,
             "manual_review_count": manual_review_count,
+            "critical_violations_count": critical_violations_count,
+            "high_violations_count": high_violations_count,
+            "medium_violations_count": medium_violations_count,
+            "low_violations_count": low_violations_count,
+            "prioritized_violations": prioritized_violations,
             "summary": summary,
             "rule_checks": results
         }
@@ -1121,6 +1195,11 @@ async def index_ui():
     .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
     .badge-fail { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
     .badge-manual-review, .badge-manual_review { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
+
+    .priority-critical { background: rgba(225, 29, 72, 0.2); color: #fb7185; border: 1px solid rgba(225, 29, 72, 0.4); font-weight: 800; padding: 2px 7px; border-radius: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .priority-high { background: rgba(234, 88, 12, 0.2); color: #fb923c; border: 1px solid rgba(234, 88, 12, 0.4); font-weight: 800; padding: 2px 7px; border-radius: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .priority-medium { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); font-weight: 800; padding: 2px 7px; border-radius: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .priority-low { background: rgba(59, 130, 246, 0.18); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.35); font-weight: 800; padding: 2px 7px; border-radius: 6px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-cyan-500 selection:text-white">
@@ -1310,8 +1389,14 @@ async def index_ui():
                 </div>
               </div>
 
-              <div class="flex justify-between items-center pt-2 border-b border-slate-800 pb-3 mb-2">
-                <span id="res-counts" class="text-xs font-semibold text-slate-400"></span>
+              <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-b border-slate-800 pb-3 mb-2">
+                <div class="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
+                  <span class="text-slate-400 mr-1 text-[11px] uppercase tracking-wider">Priority Breakdown:</span>
+                  <span id="res-pri-critical" class="priority-critical">0 CRITICAL</span>
+                  <span id="res-pri-high" class="priority-high">0 HIGH</span>
+                  <span id="res-pri-medium" class="priority-medium">0 MEDIUM</span>
+                  <span id="res-pri-low" class="priority-low">0 LOW</span>
+                </div>
                 <a id="res-pdf-link" target="_blank" class="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold hover:bg-emerald-500/20">
                   <i data-lucide="download" class="w-3.5 h-3.5 inline-block mr-1"></i> Download PDF
                 </a>
@@ -1524,6 +1609,26 @@ async def index_ui():
         document.getElementById('res-counts').innerText = 'Passed: ' + (data.passed_count || 0) + ' | Warnings: ' + (data.warnings_count || 0) + ' | Violations: ' + (data.violations_count || 0) + ' | Review: ' + (data.manual_review_count || 0);
         document.getElementById('res-pdf-link').href = '/api/reports/' + data.id + '/pdf';
 
+        // Update Priority Counts
+        const checks = data.details?.rule_checks || [];
+        const priCrit = data.details?.critical_violations_count !== undefined 
+          ? data.details.critical_violations_count 
+          : checks.filter(r => r.priority === 'CRITICAL' && r.status !== 'PASS').length;
+        const priHi = data.details?.high_violations_count !== undefined 
+          ? data.details.high_violations_count 
+          : checks.filter(r => r.priority === 'HIGH' && r.status !== 'PASS').length;
+        const priMed = data.details?.medium_violations_count !== undefined 
+          ? data.details.medium_violations_count 
+          : checks.filter(r => r.priority === 'MEDIUM' && r.status !== 'PASS').length;
+        const priLo = data.details?.low_violations_count !== undefined 
+          ? data.details.low_violations_count 
+          : checks.filter(r => r.priority === 'LOW' && r.status !== 'PASS').length;
+
+        document.getElementById('res-pri-critical').innerText = `${priCrit} CRITICAL`;
+        document.getElementById('res-pri-high').innerText = `${priHi} HIGH`;
+        document.getElementById('res-pri-medium').innerText = `${priMed} MEDIUM`;
+        document.getElementById('res-pri-low').innerText = `${priLo} LOW`;
+
         // Populate Review & Corrections Form
         const fields = data.details?.fields || {};
         document.getElementById('edit-report-id').value = data.id;
@@ -1575,10 +1680,14 @@ async def index_ui():
         (data.details?.rule_checks || []).forEach(r => {
           const item = document.createElement('div');
           const ruleStatusSlug = (r.status || 'pass').toLowerCase().replace(/\s+/g, '-');
+          const priSlug = (r.priority || 'low').toLowerCase();
           item.className = 'p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-xs';
           item.innerHTML = `
             <div class="flex justify-between items-center">
-              <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
+              <div class="flex items-center gap-2">
+                <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
+                <span class="priority-${priSlug}">${r.priority || 'LOW'} PRIORITY</span>
+              </div>
               <span class="badge-${ruleStatusSlug}">${r.status}</span>
             </div>
             <div class="font-bold text-white">${r.title}</div>
@@ -1638,16 +1747,40 @@ async def index_ui():
         
         document.getElementById('res-summary').innerText = data.summary;
         document.getElementById('res-counts').innerText = 'Passed: ' + (data.passed_count || 0) + ' | Warnings: ' + (data.warnings_count || 0) + ' | Violations: ' + (data.violations_count || 0) + ' | Review: ' + (data.manual_review_count || 0);
+
+        // Update Priority Counts
+        const checks = data.details?.rule_checks || [];
+        const priCrit = data.details?.critical_violations_count !== undefined 
+          ? data.details.critical_violations_count 
+          : checks.filter(r => r.priority === 'CRITICAL' && r.status !== 'PASS').length;
+        const priHi = data.details?.high_violations_count !== undefined 
+          ? data.details.high_violations_count 
+          : checks.filter(r => r.priority === 'HIGH' && r.status !== 'PASS').length;
+        const priMed = data.details?.medium_violations_count !== undefined 
+          ? data.details.medium_violations_count 
+          : checks.filter(r => r.priority === 'MEDIUM' && r.status !== 'PASS').length;
+        const priLo = data.details?.low_violations_count !== undefined 
+          ? data.details.low_violations_count 
+          : checks.filter(r => r.priority === 'LOW' && r.status !== 'PASS').length;
+
+        document.getElementById('res-pri-critical').innerText = `${priCrit} CRITICAL`;
+        document.getElementById('res-pri-high').innerText = `${priHi} HIGH`;
+        document.getElementById('res-pri-medium').innerText = `${priMed} MEDIUM`;
+        document.getElementById('res-pri-low').innerText = `${priLo} LOW`;
         
         const list = document.getElementById('rules-list');
         list.innerHTML = '';
         (data.details?.rule_checks || []).forEach(r => {
           const item = document.createElement('div');
           const ruleStatusSlug = (r.status || 'pass').toLowerCase().replace(/\s+/g, '-');
+          const priSlug = (r.priority || 'low').toLowerCase();
           item.className = 'p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-xs';
           item.innerHTML = `
             <div class="flex justify-between items-center">
-              <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
+              <div class="flex items-center gap-2">
+                <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
+                <span class="priority-${priSlug}">${r.priority || 'LOW'} PRIORITY</span>
+              </div>
               <span class="badge-${ruleStatusSlug}">${r.status}</span>
             </div>
             <div class="font-bold text-white">${r.title}</div>

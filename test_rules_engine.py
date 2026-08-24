@@ -117,15 +117,59 @@ def test_formula_correctness():
     assert result["score"] == expected_score, f"Formula mismatch: {result['score']} != {expected_score}"
     print(f" Formula Verified: {result['passed_rule_weight']} / {result['total_applicable_rule_weight']} × 100 = {result['score']}% ({result['status']})")
 
+def test_violation_prioritization_and_sorting():
+    print("\n--- TEST 7: Violation Prioritization & Sorting (CRITICAL > HIGH > MEDIUM > LOW) ---")
+    data = {
+        "commodity_name": "Crunchy Protein Peanut Butter",
+        "brand": "FitNut",
+        "manufacturer_details": "Manufactured under license by Contract Co-Packers Ltd, Mumbai", # MANUAL REVIEW -> MEDIUM
+        "mrp": "", # Missing mandatory MRP -> CRITICAL
+        "net_quantity": "2 lbs", # Prohibited non-metric unit -> CRITICAL
+        "mfg_date": "08/2026", # PASS -> LOW
+        "expiry_date": "12 Months", # PASS -> LOW
+        "customer_care": "", # Missing customer care -> HIGH
+        "unit_sale_price": "" # Missing USP -> HIGH
+    }
+
+    result = LegalMetrologyRulesEngine.validate_extracted_data(data, category="Food")
+    checks = result["rule_checks"]
+    priorities = [c["priority"] for c in checks]
+    
+    print(f" Prioritized Checks Order: {[(c['rule_code'], c['priority'], c['status']) for c in checks]}")
+    print(f" Critical Count: {result['critical_violations_count']} | High: {result['high_violations_count']} | Medium: {result['medium_violations_count']} | Low: {result['low_violations_count']}")
+
+    # Assert Priority Ordering: CRITICAL must appear before HIGH, HIGH before MEDIUM, MEDIUM before LOW
+    priority_order = {"CRITICAL": 1, "HIGH": 2, "MEDIUM": 3, "LOW": 4}
+    numeric_priorities = [priority_order[p] for p in priorities]
+    assert numeric_priorities == sorted(numeric_priorities), f"Rule checks are not sorted by priority: {priorities}"
+
+    # Assert missing mandatory MRP and prohibited units are CRITICAL
+    mrp_check = next(c for c in checks if c["rule_code"] == "LM-RULE-6-1-E")
+    assert mrp_check["priority"] == "CRITICAL", f"Expected MRP to be CRITICAL, got {mrp_check['priority']}"
+
+    qty_check = next(c for c in checks if c["rule_code"] == "LM-RULE-6-1-C")
+    assert qty_check["priority"] == "CRITICAL", f"Expected prohibited units in Net Quantity to be CRITICAL, got {qty_check['priority']}"
+
+    # Assert missing customer care is HIGH
+    care_check = next(c for c in checks if c["rule_code"] == "LM-RULE-6-1-F")
+    assert care_check["priority"] == "HIGH", f"Expected Customer Care to be HIGH, got {care_check['priority']}"
+
+    # Assert ambiguous contract statement is MEDIUM
+    mfg_check = next(c for c in checks if c["rule_code"] == "LM-RULE-6-1-A")
+    assert mfg_check["priority"] == "MEDIUM", f"Expected Ambiguous Mfg to be MEDIUM, got {mfg_check['priority']}"
+
+    print(" Verified: Missing mandatory declarations prioritized as CRITICAL and sorted highest to lowest.")
+
 if __name__ == "__main__":
-    print("================================================================")
-    print("   LEGAL METROLOGY COMPLIANCE SCORE & 4-TIER TEST SUITE")
-    print("================================================================")
+    print("=================================================================")
+    print("   LEGAL METROLOGY VIOLATION PRIORITIZATION & TEST SUITE")
+    print("=================================================================")
     test_rules_loading()
     test_compliant_tier()
     test_mostly_compliant_tier()
     test_needs_review_tier()
     test_high_risk_tier()
     test_formula_correctness()
-    print("\n ALL 6 SCORE & TIER TESTS PASSED PERFECTLY!")
-    print("================================================================")
+    test_violation_prioritization_and_sorting()
+    print("\n ALL 7 PRIORITIZATION, SCORE & TIER TESTS PASSED PERFECTLY!")
+    print("=================================================================")

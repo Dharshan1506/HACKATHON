@@ -40,6 +40,11 @@ class ComplianceAIAnalyzer:
             "warnings_count": rule_eval["warnings_count"],
             "violations_count": rule_eval["violations_count"],
             "manual_review_count": rule_eval.get("manual_review_count", 0),
+            "critical_violations_count": rule_eval.get("critical_violations_count", 0),
+            "high_violations_count": rule_eval.get("high_violations_count", 0),
+            "medium_violations_count": rule_eval.get("medium_violations_count", 0),
+            "low_violations_count": rule_eval.get("low_violations_count", 0),
+            "prioritized_violations": rule_eval.get("prioritized_violations", []),
             "rule_checks": rule_checks,
             "action_items": key_action_items if key_action_items else ["Packaging fully complies with Legal Metrology (Packaged Commodities) Rules, 2011."]
         }
