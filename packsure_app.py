@@ -107,85 +107,59 @@ async def get_db():
             await session.close()
 
 # -----------------------------------------------------------------------------
-# Legal Metrology Compliance Rules Engine (Packaged Commodities Rules 2011)
+# Configurable Legal Metrology Rules Registry & Engine
 # -----------------------------------------------------------------------------
-class LegalMetrologyRulesEngine:
-    MANDATORY_RULES = [
-        {
-            "id": "RULE_6_1_A",
-            "code": "LM-RULE-6-1-A",
-            "title": "Manufacturer / Packer / Importer Address",
-            "clause": "Rule 6(1)(a) of Legal Metrology (Packaged Commodities) Rules 2011",
-            "description": "Name and complete address of the manufacturer, packer, or importer must be clearly declared.",
-            "field": "manufacturer_details",
-            "weight": 15
-        },
-        {
-            "id": "RULE_6_1_B",
-            "code": "LM-RULE-6-1-B",
-            "title": "Generic / Common Name of Commodity",
-            "clause": "Rule 6(1)(b) of Legal Metrology (Packaged Commodities) Rules 2011",
-            "description": "The common or generic name of the commodity contained in the package.",
-            "field": "commodity_name",
-            "weight": 15
-        },
-        {
-            "id": "RULE_6_1_C",
-            "code": "LM-RULE-6-1-C",
-            "title": "Net Quantity & Standard Units",
-            "clause": "Rule 6(1)(c) & Rule 7 of Legal Metrology Rules",
-            "description": "Net quantity in metric units (g, kg, ml, l, N, pcs) with clear numeral spacing.",
-            "field": "net_quantity",
-            "weight": 20
-        },
-        {
-            "id": "RULE_6_1_D",
-            "code": "LM-RULE-6-1-D",
-            "title": "Month & Year of Manufacture / Packing",
-            "clause": "Rule 6(1)(d) of Legal Metrology Rules",
-            "description": "Date of manufacture/packing/import in MM/YYYY, Month Year, or DD/MM/YYYY format.",
-            "field": "mfg_date",
-            "weight": 15
-        },
-        {
-            "id": "RULE_6_1_E",
-            "code": "LM-RULE-6-1-E",
-            "title": "Maximum Retail Price (MRP)",
-            "clause": "Rule 6(1)(e) of Legal Metrology Rules",
-            "description": "MRP declared as 'MRP Rs. XX (inclusive of all taxes)' or '₹ XX (incl. of all taxes)'.",
-            "field": "mrp",
-            "weight": 15
-        },
-        {
-            "id": "RULE_6_1_E_USP",
-            "code": "LM-RULE-6-1-E-USP",
-            "title": "Unit Sale Price (USP)",
-            "clause": "Rule 6(1)(e) Amendment 2021",
-            "description": "Unit Sale Price (e.g. ₹/g, ₹/kg, ₹/ml) declared clearly alongside MRP for packages > 10g/ml.",
-            "field": "unit_sale_price",
-            "weight": 10
-        },
-        {
-            "id": "RULE_6_1_F",
-            "code": "LM-RULE-6-1-F",
-            "title": "Customer Care Contact Details",
-            "clause": "Rule 6(1)(f) of Legal Metrology Rules",
-            "description": "Complete contact info including Email, Helpline Number, and Address for consumer complaints.",
-            "field": "customer_care",
-            "weight": 10
-        }
-    ]
+class RulesRegistry:
+    CONFIG_PATH = os.path.join(os.path.dirname(__file__), "backend", "app", "compliance", "rules_config.json")
+    _cached_rules: Optional[List[Dict[str, Any]]] = None
 
     @classmethod
-    def validate(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+    def get_rules(cls, category: str = "ALL") -> List[Dict[str, Any]]:
+        if cls._cached_rules is None:
+            if os.path.exists(cls.CONFIG_PATH):
+                try:
+                    with open(cls.CONFIG_PATH, "r", encoding="utf-8") as f:
+                        cls._cached_rules = json.load(f).get("rules", [])
+                except Exception:
+                    cls._cached_rules = None
+            if cls._cached_rules is None:
+                cls._cached_rules = cls._default_rules()
+
+        cat = (category or "ALL").strip().lower()
+        return [r for r in cls._cached_rules if "all" in [c.lower() for c in r.get("applicable_categories", ["ALL"])] or cat in [c.lower() for c in r.get("applicable_categories", [])]]
+
+    @classmethod
+    def _default_rules(cls) -> List[Dict[str, Any]]:
+        return [
+            {"id": "RULE_6_1_A", "code": "LM-RULE-6-1-A", "title": "Manufacturer / Packer / Importer Address", "clause": "Rule 6(1)(a) PCR 2011", "field": "manufacturer_details", "weight": 15, "applicable_categories": ["ALL"]},
+            {"id": "RULE_6_1_B", "code": "LM-RULE-6-1-B", "title": "Generic / Common Name of Commodity", "clause": "Rule 6(1)(b) PCR 2011", "field": "commodity_name", "weight": 15, "applicable_categories": ["ALL"]},
+            {"id": "RULE_6_1_C", "code": "LM-RULE-6-1-C", "title": "Net Quantity & Standard Units", "clause": "Rule 6(1)(c) & Rule 7", "field": "net_quantity", "weight": 20, "applicable_categories": ["ALL"]},
+            {"id": "RULE_6_1_D", "code": "LM-RULE-6-1-D", "title": "Month & Year of Manufacture / Packing", "clause": "Rule 6(1)(d) PCR 2011", "field": "mfg_date", "weight": 15, "applicable_categories": ["ALL"]},
+            {"id": "RULE_6_1_E", "code": "LM-RULE-6-1-E", "title": "Maximum Retail Price (MRP)", "clause": "Rule 6(1)(e) PCR 2011", "field": "mrp", "weight": 15, "applicable_categories": ["ALL"]},
+            {"id": "RULE_6_1_E_USP", "code": "LM-RULE-6-1-E-USP", "title": "Unit Sale Price (USP)", "clause": "Rule 6(1)(e) 2021 Amend", "field": "unit_sale_price", "weight": 10, "applicable_categories": ["ALL"]},
+            {"id": "RULE_6_1_F", "code": "LM-RULE-6-1-F", "title": "Consumer Care Details", "clause": "Rule 6(1)(f) PCR 2011", "field": "customer_care", "weight": 10, "applicable_categories": ["ALL"]},
+            {"id": "RULE_6_1_G", "code": "LM-RULE-6-1-G", "title": "Country of Origin & Importer Declaration", "clause": "Rule 6(1)(g) PCR 2011", "field": "country_of_origin", "weight": 10, "applicable_categories": ["Imported Goods"]},
+            {"id": "RULE_6_1_H", "code": "LM-RULE-6-1-H", "title": "Best Before / Expiry Period", "clause": "Rule 6(1)(d) & FSSAI Mandate", "field": "expiry_date", "weight": 10, "applicable_categories": ["Food", "Cosmetics"]}
+        ]
+
+class LegalMetrologyRulesEngine:
+    """
+    Deterministic Rule-Based Legal Metrology Compliance Engine.
+    Executes statutory checks under the Packaged Commodities Rules 2011.
+    Each rule returns strictly one of: PASS, FAIL, WARNING, MANUAL REVIEW.
+    """
+
+    @classmethod
+    def validate(cls, data: Dict[str, Any], category: str = "ALL") -> Dict[str, Any]:
+        rules = RulesRegistry.get_rules(category)
         results = []
         earned = 0.0
-        total = sum(r["weight"] for r in cls.MANDATORY_RULES)
+        total = sum(r.get("weight", 10) for r in rules)
 
-        for rule in cls.MANDATORY_RULES:
+        for rule in rules:
             val = str(data.get(rule["field"], "") or "").strip()
-            res = cls._check_rule(rule["id"], val, data)
-            score_earned = rule["weight"] * res["fraction"]
+            res = cls._check_rule(rule, val, data, category)
+            score_earned = rule.get("weight", 10) * res["fraction"]
             earned += score_earned
 
             results.append({
@@ -193,79 +167,177 @@ class LegalMetrologyRulesEngine:
                 "rule_code": rule["code"],
                 "title": rule["title"],
                 "clause": rule["clause"],
-                "description": rule["description"],
+                "description": rule.get("description", ""),
                 "field": rule["field"],
                 "value": val if val else None,
-                "status": res["status"],
-                "weight": rule["weight"],
+                "status": res["status"],  # PASS, FAIL, WARNING, MANUAL REVIEW
+                "weight": rule.get("weight", 10),
                 "score_earned": round(score_earned, 2),
                 "finding": res["finding"],
                 "remediation": res["remediation"]
             })
 
         final_score = round((earned / total) * 100.0, 1) if total > 0 else 0.0
-        status = "PASS" if final_score >= 85.0 else ("WARNING" if final_score >= 60.0 else "FAIL")
-        risk = "LOW" if final_score >= 85.0 else ("MEDIUM" if final_score >= 60.0 else "HIGH")
+        
+        passed_count = sum(1 for r in results if r["status"] == "PASS")
+        warnings_count = sum(1 for r in results if r["status"] == "WARNING")
+        violations_count = sum(1 for r in results if r["status"] == "FAIL")
+        manual_review_count = sum(1 for r in results if r["status"] == "MANUAL REVIEW")
+
+        # Deterministic status verdict
+        if violations_count > 0:
+            status = "FAIL"
+            risk = "HIGH" if violations_count >= 2 else "MEDIUM"
+        elif manual_review_count > 0:
+            status = "MANUAL REVIEW"
+            risk = "MEDIUM"
+        elif warnings_count > 0 or final_score < 85.0:
+            status = "WARNING"
+            risk = "LOW"
+        else:
+            status = "PASS"
+            risk = "LOW"
+
+        summary = cls._generate_summary(final_score, status, passed_count, warnings_count, violations_count, manual_review_count)
 
         return {
             "score": final_score,
             "status": status,
             "risk_level": risk,
-            "passed_count": sum(1 for r in results if r["status"] == "PASS"),
-            "warnings_count": sum(1 for r in results if r["status"] == "WARNING"),
-            "violations_count": sum(1 for r in results if r["status"] == "FAIL"),
+            "passed_count": passed_count,
+            "warnings_count": warnings_count,
+            "violations_count": violations_count,
+            "manual_review_count": manual_review_count,
+            "summary": summary,
             "rule_checks": results
         }
 
     @classmethod
-    def _check_rule(cls, rule_id: str, val: str, full_data: Dict[str, Any]) -> Dict[str, Any]:
-        if not val:
-            return {"status": "FAIL", "fraction": 0.0, "finding": "Declaration missing from packaging.", "remediation": "Print mandatory declaration on display panel."}
-        v = val.lower()
+    def _check_rule(cls, rule: Dict[str, Any], val: str, full_data: Dict[str, Any], category: str) -> Dict[str, Any]:
+        rule_id = rule["id"]
+        if not val or val.lower() in ["none", "null", "n/a", "not declared"]:
+            if rule_id == "RULE_6_1_G" and category != "Imported Goods":
+                return {"status": "PASS", "fraction": 1.0, "finding": "Domestic commodity; foreign importer declaration not required.", "remediation": "Compliant."}
+            return {
+                "status": "FAIL", 
+                "fraction": 0.0, 
+                "finding": f"Statutory declaration for '{rule['title']}' is missing from packaging.", 
+                "remediation": rule.get("remediation", "Print mandatory declaration prominently on principal display panel.")
+            }
+
+        v = val.lower().strip()
 
         if rule_id == "RULE_6_1_A":
-            if any(k in v for k in ["mfd", "manufactured", "packed", "ltd", "pvt", "corp", "inc", "road", "industrial", "estate", "india", "pin"]) or len(val) > 15:
-                return {"status": "PASS", "fraction": 1.0, "finding": "Valid manufacturer/packer details declared.", "remediation": "Compliant."}
-            return {"status": "WARNING", "fraction": 0.5, "finding": "Partial manufacturer details.", "remediation": "Include full registered address & PIN code."}
+            has_structure = any(k in v for k in ["mfd", "manufactured", "packed", "imported", "marketed", "ltd", "pvt", "corp", "inc", "co.", "llp"])
+            has_location = any(k in v for k in ["street", "road", "industrial", "estate", "area", "dist", "state", "india", "pin", "plot", "building", "floor", "sector", "lane"])
+            has_pincode = bool(re.search(r'\b[1-9][0-9]{5}\b', val))
+            is_ambiguous = any(w in v for w in ["under license", "co-packed", "job worker", "third party", "contract pack"])
+
+            if is_ambiguous:
+                return {"status": "MANUAL REVIEW", "fraction": 0.7, "finding": f"Complex multi-party manufacturing or licensing statement detected: '{val}'.", "remediation": "Verify that both marketing entity and manufacturing premise addresses are declared as per Rule 6(1)(a)."}
+            elif has_structure and (has_location or has_pincode) and len(val) >= 20:
+                return {"status": "PASS", "fraction": 1.0, "finding": f"Valid manufacturer/packer name and registered address present: '{val}'.", "remediation": "Compliant."}
+            elif has_structure and len(val) >= 10:
+                return {"status": "WARNING", "fraction": 0.6, "finding": "Manufacturer/Packer name detected but complete premises address or postal PIN code appears partial.", "remediation": "Include full registered address with 6-digit postal PIN code as mandated under Rule 6(1)(a)."}
+            return {"status": "FAIL", "fraction": 0.2, "finding": "Manufacturer detail lacks legally recognized company structure or postal address format.", "remediation": "Declare 'Manufactured & Packed By: [Company Name, Full Registered Address, PIN Code]'."}
 
         elif rule_id == "RULE_6_1_B":
-            if len(val) >= 3:
-                return {"status": "PASS", "fraction": 1.0, "finding": f"Commodity '{val}' declared.", "remediation": "Compliant."}
-            return {"status": "FAIL", "fraction": 0.0, "finding": "Commodity name too short.", "remediation": "Declare full generic commodity name."}
+            if any(term == v for term in ["product", "sample", "item", "goods", "unknown", "generic"]):
+                return {"status": "FAIL", "fraction": 0.0, "finding": f"Declaration '{val}' is too vague.", "remediation": "Declare specific common or generic commodity name."}
+            elif len(val) >= 3:
+                return {"status": "PASS", "fraction": 1.0, "finding": f"Generic commodity name '{val}' clearly declared.", "remediation": "Compliant."}
+            return {"status": "MANUAL REVIEW", "fraction": 0.5, "finding": f"Extracted commodity string '{val}' is short or potentially truncated by OCR.", "remediation": "Inspect principal display panel to verify full commodity name."}
 
         elif rule_id == "RULE_6_1_C":
-            if re.search(r'(\d+(\.\d+)?)\s*(g|kg|ml|l|ltr|grams|n|pcs|units)\b', v):
-                return {"status": "PASS", "fraction": 1.0, "finding": f"Net quantity '{val}' in metric units.", "remediation": "Compliant."}
+            if any(re.search(rf'\b{u}\b', v) for u in ["lbs", "lb", "oz", "ounce", "fl oz", "fluid oz", "gallon"]):
+                return {"status": "FAIL", "fraction": 0.0, "finding": f"Non-metric unit detected in net quantity: '{val}'. Prohibited under Rule 7.", "remediation": "Replace non-metric measures (lbs, oz) exclusively with standard metric units (g, kg, ml, l, N)."}
+            metric_match = re.search(r'(\d+(\.\d+)?)\s*(g|kg|ml|l|ltr|grams|kilograms|n|pcs|units)\b', v)
+            if metric_match:
+                has_space = bool(re.search(r'\d+\s+[a-zA-Z]', metric_match.group(0)))
+                if has_space:
+                    return {"status": "PASS", "fraction": 1.0, "finding": f"Net quantity '{val}' in standard metric units with numeral spacing.", "remediation": "Compliant."}
+                return {"status": "WARNING", "fraction": 0.85, "finding": f"Net quantity '{val}' valid, but lacks mandated whitespace separation between numeral and unit symbol.", "remediation": "Insert a space between numeral and unit symbol (e.g. '350 g' instead of '350g')."}
             elif any(c.isdigit() for c in val):
-                return {"status": "WARNING", "fraction": 0.6, "finding": "Number found but missing metric unit.", "remediation": "Use standard metric units (e.g. '500 g')."}
-            return {"status": "FAIL", "fraction": 0.0, "finding": "Invalid quantity format.", "remediation": "Specify net quantity in SI metric units."}
+                return {"status": "MANUAL REVIEW", "fraction": 0.4, "finding": f"Numeral detected in quantity field ('{val}') but metric unit symbol is ambiguous.", "remediation": "Confirm physical packaging specifies standard metric unit (g, kg, ml, l, N)."}
+            return {"status": "FAIL", "fraction": 0.0, "finding": f"Invalid net quantity declaration '{val}'.", "remediation": "Specify net quantity in SI metric units prescribed under Rule 7 & 8."}
 
         elif rule_id == "RULE_6_1_D":
-            if re.search(r'(\b(0[1-9]|1[0-2])[\/\-](20\d{2}|\d{2})\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(20\d{2}|\d{2})\b|\b\d{4}\b)', v):
-                return {"status": "PASS", "fraction": 1.0, "finding": f"Mfg date '{val}' present.", "remediation": "Compliant."}
-            return {"status": "FAIL", "fraction": 0.0, "finding": "Non-standard date.", "remediation": "Use MM/YYYY format (e.g. 08/2026)."}
+            date_match = re.search(r'(\b(0[1-9]|1[0-2])[\/\-.](20[1-3][0-9]|[1-3][0-9])\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,.-]+(20[1-3][0-9]|[1-3][0-9])\b)', v)
+            if date_match:
+                return {"status": "PASS", "fraction": 1.0, "finding": f"Manufacture/Packing date '{val}' in valid calendar format.", "remediation": "Compliant."}
+            elif any(y in val for y in ["2023", "2024", "2025", "2026", "2027", "2028"]):
+                return {"status": "WARNING", "fraction": 0.6, "finding": f"Year detected in date declaration '{val}', but month format is non-standard.", "remediation": "Format date strictly as 'Mfg Date: MM/YYYY' (e.g., 08/2026)."}
+            elif any(w in v for w in ["best before", "expiry", "use by", "months"]):
+                return {"status": "MANUAL REVIEW", "fraction": 0.5, "finding": f"Relative date or expiry string found ('{val}') instead of explicit manufacturing/packing date.", "remediation": "Ensure both manufacturing date (MM/YYYY) and expiry timeframe are declared."}
+            return {"status": "FAIL", "fraction": 0.0, "finding": f"Date declaration '{val}' is invalid or missing month and year.", "remediation": "Print manufacturing month & year prominently as 'Mfg Date: MM/YYYY'."}
 
         elif rule_id == "RULE_6_1_E":
-            has_tax = any(t in v for t in ["incl", "tax", "taxes"])
-            has_mrp = any(m in v for m in ["mrp", "m.r.p", "rs", "₹", "price"])
+            has_tax = any(t in v for t in ["incl", "inclusive", "tax", "taxes", "all taxes"])
+            has_mrp_prefix = any(m in v for m in ["mrp", "m.r.p", "max retail price", "maximum retail price", "rs", "₹", "inr"])
             has_digit = any(c.isdigit() for c in val)
-            if has_mrp and has_digit and has_tax:
-                return {"status": "PASS", "fraction": 1.0, "finding": f"MRP '{val}' inclusive of taxes.", "remediation": "Compliant."}
-            elif has_mrp and has_digit:
-                return {"status": "WARNING", "fraction": 0.7, "finding": "MRP present but missing '(inclusive of all taxes)'.", "remediation": "Add '(inclusive of all taxes)'."}
-            return {"status": "FAIL", "fraction": 0.0, "finding": "MRP missing or illegible.", "remediation": "Declare 'MRP Rs. XX.XX (incl. of all taxes)'."}
+            if has_mrp_prefix and has_digit and has_tax:
+                return {"status": "PASS", "fraction": 1.0, "finding": f"MRP declaration '{val}' inclusive of all taxes.", "remediation": "Compliant."}
+            elif has_mrp_prefix and has_digit:
+                return {"status": "WARNING", "fraction": 0.75, "finding": f"MRP numeric price found in '{val}', but mandatory phrase '(inclusive of all taxes)' is missing.", "remediation": "Append '(inclusive of all taxes)' alongside MRP."}
+            elif has_digit:
+                return {"status": "MANUAL REVIEW", "fraction": 0.4, "finding": f"Numeric value '{val}' detected but lacking standardized 'MRP' or '₹' prefix.", "remediation": "Verify whether price declaration displays clear 'MRP Rs. XX' prefix."}
+            return {"status": "FAIL", "fraction": 0.0, "finding": f"MRP declaration '{val}' lacks price numerals.", "remediation": "Declare 'MRP Rs. XX.XX (inclusive of all taxes)' prominently on the principal display panel."}
 
         elif rule_id == "RULE_6_1_E_USP":
-            if any(u in v for u in ["per", "/", "g", "kg", "ml", "l"]) and any(c.isdigit() for c in val):
-                return {"status": "PASS", "fraction": 1.0, "finding": f"USP '{val}' present.", "remediation": "Compliant."}
-            return {"status": "WARNING", "fraction": 0.4, "finding": "USP not clearly stated.", "remediation": "State Unit Sale Price (e.g. ₹0.50/g)."}
+            has_usp = any(p in v for p in ["per g", "per kg", "per ml", "per l", "per unit", "/g", "/kg", "/ml", "/l", "/unit", "usp"])
+            has_digit = any(c.isdigit() for c in val)
+            if has_usp and has_digit:
+                return {"status": "PASS", "fraction": 1.0, "finding": f"Unit Sale Price '{val}' declared as per 2021 Amendments.", "remediation": "Compliant."}
+            elif has_digit:
+                return {"status": "WARNING", "fraction": 0.5, "finding": f"Unit price value '{val}' found but unit measure (per g/kg/ml) is unclear.", "remediation": "Declare USP clearly (e.g., '₹ 1.10 per g' or '₹ 50 per kg')."}
+            return {"status": "MANUAL REVIEW", "fraction": 0.3, "finding": "Unit Sale Price (USP) was not detected. Exempt only for packages containing <= 10g or <= 10ml.", "remediation": "Check package net quantity; if > 10g/ml, declare Unit Sale Price adjacent to MRP."}
 
         elif rule_id == "RULE_6_1_F":
-            if "@" in val or "email" in v or any(c.isdigit() for c in val):
-                return {"status": "PASS", "fraction": 1.0, "finding": "Customer care contact present.", "remediation": "Compliant."}
-            return {"status": "FAIL", "fraction": 0.0, "finding": "No consumer care helpline.", "remediation": "Provide consumer helpline number and email."}
+            has_email = "@" in val or "email" in v
+            digits_count = len(re.findall(r'\d', val))
+            has_phone = digits_count >= 8 or any(w in v for w in ["helpline", "toll free", "toll-free", "1800", "phone", "tel"])
+            if has_email and has_phone:
+                return {"status": "PASS", "fraction": 1.0, "finding": f"Complete consumer care email and helpline number declared: '{val}'.", "remediation": "Compliant."}
+            elif has_email or has_phone:
+                return {"status": "WARNING", "fraction": 0.7, "finding": f"Partial consumer care contact: '{val}'.", "remediation": "Provide both telephone helpline and active email address under 'Customer Care Cell'."}
+            elif any(w in v for w in ["care", "customer", "complaint", "feedback", "contact"]):
+                return {"status": "MANUAL REVIEW", "fraction": 0.4, "finding": f"Consumer care reference detected ('{val}') but requires visual verification.", "remediation": "Ensure executive contact address, email, and helpline number are fully legible."}
+            return {"status": "FAIL", "fraction": 0.0, "finding": "Consumer care contact details are missing.", "remediation": "Include 'For Consumer Complaints: Contact Executive at [Address], Tel: [No], Email: [Mail]'."}
 
-        return {"status": "FAIL", "fraction": 0.0, "finding": "Check failed.", "remediation": "Review label."}
+        elif rule_id == "RULE_6_1_G":
+            has_origin = any(w in v for w in ["india", "origin", "made in", "product of", "imported from"]) or len(val) > 2
+            importer_val = str(full_data.get("importer", "") or "").strip().lower()
+            has_importer = len(importer_val) > 3 and importer_val != "none"
+            if category == "Imported Goods":
+                if has_origin and has_importer:
+                    return {"status": "PASS", "fraction": 1.0, "finding": f"Country of origin ('{val}') and importer ('{importer_val}') declared.", "remediation": "Compliant."}
+                elif has_origin:
+                    return {"status": "WARNING", "fraction": 0.6, "finding": f"Country of origin '{val}' declared, but registered Indian importer name/address is missing.", "remediation": "Mandatory to declare registered Importer details for foreign goods."}
+                return {"status": "FAIL", "fraction": 0.0, "finding": "Imported commodity missing mandatory Country of Origin declaration.", "remediation": "Declare 'Country of Origin: [Country]' on package."}
+            else:
+                return {"status": "PASS", "fraction": 1.0, "finding": f"Origin declared as '{val}'.", "remediation": "Compliant."}
+
+        elif rule_id == "RULE_6_1_H":
+            has_exp_pattern = bool(re.search(r'(\b(0[1-9]|1[0-2])[\/\-.](20[1-3][0-9]|[1-3][0-9])\b|\d+\s*months?)', v))
+            has_exp_kw = any(w in v for w in ["best before", "expiry", "exp", "use by", "months from mfg", "months from packaging"])
+            if has_exp_pattern and has_exp_kw:
+                return {"status": "PASS", "fraction": 1.0, "finding": f"Best Before / Expiry declaration '{val}' complies with regulations.", "remediation": "Compliant."}
+            elif has_exp_pattern or has_exp_kw:
+                return {"status": "PASS", "fraction": 1.0, "finding": f"Expiry timeframe '{val}' present.", "remediation": "Compliant."}
+            return {"status": "FAIL", "fraction": 0.0, "finding": "Mandatory Best Before / Expiry timeframe missing for perishable/cosmetic commodity.", "remediation": "Declare 'Best Before XX Months from Packaging' or 'Expiry Date: MM/YYYY'."}
+
+        return {"status": "MANUAL REVIEW", "fraction": 0.5, "finding": f"Declaration '{val}' requires visual verification.", "remediation": "Inspect physical artwork for statutory alignment."}
+
+    @classmethod
+    def _generate_summary(cls, score: float, status: str, passed: int, warnings: int, violations: int, manual_review: int) -> str:
+        if status == "PASS":
+            return f"Product packaging demonstrates high statutory compliance ({score}%) under the Legal Metrology (Packaged Commodities) Rules, 2011. All {passed} evaluated declarations satisfy mandatory formatting and unit standards."
+        elif status == "MANUAL REVIEW":
+            return f"Statutory audit scored {score}%. {manual_review} declaration(s) flagged for MANUAL REVIEW due to complex licensing structures or ambiguous packaging phrases. Inspector verification recommended."
+        elif status == "WARNING":
+            return f"Statutory audit scored {score}% with {warnings} minor warning(s). Key declarations exist but contain minor discrepancies that require rectification."
+        else:
+            return f"Statutory audit FAILED with score {score}%. Found {violations} statutory violation(s) under the Legal Metrology Act 2009 & Packaged Commodities Rules 2011. Remediation required before market distribution."
 
 # -----------------------------------------------------------------------------
 # Real OCR Engine (EasyOCR + PyTesseract + Layout)
@@ -685,8 +757,14 @@ async def health():
     return {"status": "online", "engine": "PaddleOCR + Legal Metrology Rules 2011", "version": "1.0.0"}
 
 @app.get("/api/compliance/rules")
-async def get_rules():
-    return {"rules": LegalMetrologyRulesEngine.MANDATORY_RULES}
+async def get_rules(category: Optional[str] = None):
+    rules = RulesRegistry.get_rules(category or "ALL")
+    return {
+        "rules": rules,
+        "total_rules": len(rules),
+        "reference": "Legal Metrology (Packaged Commodities) Rules, 2011",
+        "statute": "Legal Metrology Act 2009 & Packaged Commodities Rules 2011"
+    }
 
 @app.post("/api/ocr")
 async def run_dedicated_ocr(file: UploadFile = File(...)):
@@ -744,12 +822,12 @@ async def scan(
     if fields.get("importer"): mfg_parts.append(f"Importer: {fields['importer']}")
     eval_fields["manufacturer_details"] = ", ".join(mfg_parts)
 
-    eval_res = LegalMetrologyRulesEngine.validate(eval_fields)
+    eval_res = LegalMetrologyRulesEngine.validate(eval_fields, category=final_category)
     
     p_name = fields.get("commodity_name") or product_name or "Packaged Product"
     p_brand = fields.get("brand") or "Brand"
     
-    summary = f"Audit evaluated with score {eval_res['score']}% ({eval_res['status']}). Enforces Legal Metrology Rules 2011."
+    summary = eval_res["summary"]
     
     product = Product(name=f"{p_brand} - {p_name}", category=final_category, brand=p_brand)
     db.add(product)
@@ -762,7 +840,8 @@ async def scan(
         "raw_text": ocr_res["raw_text"],
         "bounding_boxes": ocr_res["bounding_boxes"],
         "rule_checks": eval_res["rule_checks"],
-        "summary": summary
+        "summary": summary,
+        "manual_review_count": eval_res.get("manual_review_count", 0)
     }
 
     scan_res = ScanResult(
@@ -804,6 +883,7 @@ async def scan(
         "passed_count": report.passed_count,
         "warnings_count": report.warnings_count,
         "violations_count": report.violations_count,
+        "manual_review_count": eval_res.get("manual_review_count", 0),
         "summary": summary,
         "details": scan_res.extracted_data
     }
@@ -853,6 +933,9 @@ async def update_scan(
     if customer_care is not None: fields["customer_care"] = customer_care
     if unit_sale_price is not None: fields["unit_sale_price"] = unit_sale_price
 
+    existing_cat = scan_result.extracted_data.get("category", "Food")
+    updated_cat = category.strip() if category and category.strip() else existing_cat
+
     # Combine manufacturer info for legal rules validation
     eval_fields = fields.copy()
     mfg_parts = []
@@ -861,12 +944,9 @@ async def update_scan(
     if fields.get("importer"): mfg_parts.append(f"Importer: {fields['importer']}")
     eval_fields["manufacturer_details"] = ", ".join(mfg_parts)
 
-    eval_res = LegalMetrologyRulesEngine.validate(eval_fields)
+    eval_res = LegalMetrologyRulesEngine.validate(eval_fields, category=updated_cat)
 
-    summary = f"Audit evaluated with score {eval_res['score']}% ({eval_res['status']}). Enforces Legal Metrology Rules 2011."
-
-    existing_cat = scan_result.extracted_data.get("category", "Food")
-    updated_cat = category.strip() if category and category.strip() else existing_cat
+    summary = eval_res["summary"]
 
     extracted_payload = {
         "fields": fields,
@@ -875,7 +955,8 @@ async def update_scan(
         "raw_text": scan_result.extracted_data.get("raw_text", ""),
         "bounding_boxes": scan_result.extracted_data.get("bounding_boxes", []),
         "rule_checks": eval_res["rule_checks"],
-        "summary": summary
+        "summary": summary,
+        "manual_review_count": eval_res.get("manual_review_count", 0)
     }
 
     scan_result.extracted_data = extracted_payload
@@ -934,6 +1015,7 @@ async def update_scan(
         "passed_count": report.passed_count,
         "warnings_count": report.warnings_count,
         "violations_count": report.violations_count,
+        "manual_review_count": eval_res.get("manual_review_count", 0),
         "summary": summary,
         "details": scan_result.extracted_data
     }
@@ -985,7 +1067,7 @@ async def download_pdf(report_id: int, db: AsyncSession = Depends(get_db)):
 # -----------------------------------------------------------------------------
 @app.get("/", response_class=HTMLResponse)
 async def index_ui():
-    return """<!DOCTYPE html>
+    return r"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1000,6 +1082,7 @@ async def index_ui():
     .badge-pass { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
     .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
     .badge-fail { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
+    .badge-manual-review, .badge-manual_review, .badge-needs_review, .badge-needs-review { background: rgba(168, 85, 247, 0.15); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); font-weight: 600; padding: 2px 8px; border-radius: 9999px; font-size: 11px; }
   </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col selection:bg-cyan-500 selection:text-white">
@@ -1360,11 +1443,12 @@ async def index_ui():
         document.getElementById('res-score').innerText = data.compliance_score + '%';
         
         const stEl = document.getElementById('res-status');
-        stEl.className = 'badge-' + data.compliance_status.toLowerCase();
+        const statusSlug = (data.compliance_status || 'pass').toLowerCase().replace(/\s+/g, '-');
+        stEl.className = 'badge-' + statusSlug;
         stEl.innerText = data.compliance_status;
         
         document.getElementById('res-summary').innerText = data.summary;
-        document.getElementById('res-counts').innerText = 'Passed: ' + data.passed_count + ' | Warnings: ' + data.warnings_count + ' | Failures: ' + data.violations_count;
+        document.getElementById('res-counts').innerText = 'Passed: ' + (data.passed_count || 0) + ' | Warnings: ' + (data.warnings_count || 0) + ' | Violations: ' + (data.violations_count || 0) + ' | Review: ' + (data.manual_review_count || 0);
         document.getElementById('res-pdf-link').href = '/api/reports/' + data.id + '/pdf';
 
         // Populate Review & Corrections Form
@@ -1417,15 +1501,17 @@ async def index_ui():
         list.innerHTML = '';
         (data.details?.rule_checks || []).forEach(r => {
           const item = document.createElement('div');
+          const ruleStatusSlug = (r.status || 'pass').toLowerCase().replace(/\s+/g, '-');
           item.className = 'p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-xs';
           item.innerHTML = `
             <div class="flex justify-between items-center">
               <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
-              <span class="badge-${r.status.toLowerCase()}">${r.status}</span>
+              <span class="badge-${ruleStatusSlug}">${r.status}</span>
             </div>
             <div class="font-bold text-white">${r.title}</div>
-            <div class="text-[11px] font-mono text-slate-300 bg-slate-950 p-2 rounded">${r.value || 'Not Declared / Missing'}</div>
-            <div class="text-slate-400">${r.finding}</div>
+            <div class="text-[11px] font-mono text-slate-300 bg-slate-950 p-2 rounded truncate"><span class="text-slate-500">Extracted:</span> ${r.value || 'Not Declared / Missing'}</div>
+            <div class="text-slate-400"><span class="text-slate-500 font-medium">Finding:</span> ${r.finding}</div>
+            <div class="text-cyan-300 pt-0.5"><span class="text-cyan-500 font-semibold">Action:</span> ${r.remediation}</div>
           `;
           list.appendChild(item);
         });
@@ -1470,25 +1556,28 @@ async def index_ui():
         document.getElementById('res-score').innerText = data.compliance_score + '%';
         
         const stEl = document.getElementById('res-status');
-        stEl.className = 'badge-' + data.compliance_status.toLowerCase();
+        const statusSlug = (data.compliance_status || 'pass').toLowerCase().replace(/\s+/g, '-');
+        stEl.className = 'badge-' + statusSlug;
         stEl.innerText = data.compliance_status;
         
         document.getElementById('res-summary').innerText = data.summary;
-        document.getElementById('res-counts').innerText = 'Passed: ' + data.passed_count + ' | Warnings: ' + data.warnings_count + ' | Failures: ' + data.violations_count;
+        document.getElementById('res-counts').innerText = 'Passed: ' + (data.passed_count || 0) + ' | Warnings: ' + (data.warnings_count || 0) + ' | Violations: ' + (data.violations_count || 0) + ' | Review: ' + (data.manual_review_count || 0);
         
         const list = document.getElementById('rules-list');
         list.innerHTML = '';
         (data.details?.rule_checks || []).forEach(r => {
           const item = document.createElement('div');
+          const ruleStatusSlug = (r.status || 'pass').toLowerCase().replace(/\s+/g, '-');
           item.className = 'p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-xs';
           item.innerHTML = `
             <div class="flex justify-between items-center">
               <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
-              <span class="badge-${r.status.toLowerCase()}">${r.status}</span>
+              <span class="badge-${ruleStatusSlug}">${r.status}</span>
             </div>
             <div class="font-bold text-white">${r.title}</div>
-            <div class="text-[11px] font-mono text-slate-300 bg-slate-950 p-2 rounded">${r.value || 'Not Declared / Missing'}</div>
-            <div class="text-slate-400">${r.finding}</div>
+            <div class="text-[11px] font-mono text-slate-300 bg-slate-950 p-2 rounded truncate"><span class="text-slate-500">Extracted:</span> ${r.value || 'Not Declared / Missing'}</div>
+            <div class="text-slate-400"><span class="text-slate-500 font-medium">Finding:</span> ${r.finding}</div>
+            <div class="text-cyan-300 pt-0.5"><span class="text-cyan-500 font-semibold">Action:</span> ${r.remediation}</div>
           `;
           list.appendChild(item);
         });

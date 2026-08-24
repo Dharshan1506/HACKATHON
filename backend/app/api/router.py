@@ -12,7 +12,7 @@ from app.database.connection import get_db
 from app.database.models import Product, ScanResult, Report
 from app.ocr.engine import OCREngine
 from app.ai.analyzer import ComplianceAIAnalyzer
-from app.compliance.rules import LegalMetrologyRulesEngine
+from app.compliance.rules import LegalMetrologyRulesEngine, RulesRegistry
 from app.reports.generator import ReportGenerator
 
 router = APIRouter(prefix=settings.API_PREFIX)
@@ -32,25 +32,28 @@ async def health_check():
     }
 
 @router.get("/compliance/rules")
-async def get_compliance_rules():
+async def get_compliance_rules(category: Optional[str] = None):
+    rules = RulesRegistry.get_applicable_rules(category or "ALL")
     return {
-        "rules": LegalMetrologyRulesEngine.MANDATORY_RULES,
-        "reference": "Legal Metrology (Packaged Commodities) Rules, 2011"
+        "rules": rules,
+        "total_rules": len(rules),
+        "reference": "Legal Metrology (Packaged Commodities) Rules, 2011",
+        "statute": "Legal Metrology Act 2009 & Packaged Commodities Rules 2011"
     }
 
 @router.post("/scan")
 async def scan_product(
     file: UploadFile = File(...),
     product_name: Optional[str] = Form(None),
-    category: Optional[str] = Form("Packaged Commodity"),
+    category: Optional[str] = Form("Auto-Detect"),
     brand: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Accepts packaging label image, runs genuine OCR extraction and AI Legal Metrology compliance evaluation.
+    Accepts packaging label image, runs genuine OCR extraction and deterministic Legal Metrology compliance evaluation.
     """
     clean_p_name = _clean_form_str(product_name)
-    clean_category = _clean_form_str(category) or "Packaged Commodity"
+    clean_category = _clean_form_str(category) or "Auto-Detect"
     clean_brand = _clean_form_str(brand)
 
     ext = os.path.splitext(file.filename)[1] or ".jpg"
@@ -70,7 +73,14 @@ async def scan_product(
     if clean_brand:
         fields["brand"] = clean_brand
 
-    # 2. Run AI Compliance Evaluation
+    # Category Detection
+    detected_cat = ocr_result.get("detected_category", "Food")
+    if not clean_category or clean_category.lower() in ["auto-detect", "auto", "packaged commodity", "general"]:
+        final_category = detected_cat
+    else:
+        final_category = clean_category
+
+    # 2. Run Deterministic Rule-Based Legal Metrology Evaluation
     eval_fields = fields.copy()
     mfg_parts = []
     if fields.get("manufacturer_details"): mfg_parts.append(fields["manufacturer_details"])
@@ -78,13 +88,7 @@ async def scan_product(
     if fields.get("importer"): mfg_parts.append(f"Importer: {fields['importer']}")
     eval_fields["manufacturer_details"] = ", ".join(mfg_parts)
 
-    compliance_analysis = ComplianceAIAnalyzer.analyze(eval_fields)
-
-    detected_cat = ocr_result.get("detected_category", "Food")
-    if not clean_category or clean_category.lower() in ["auto-detect", "auto", "packaged commodity", "general"]:
-        final_category = detected_cat
-    else:
-        final_category = clean_category
+    compliance_analysis = ComplianceAIAnalyzer.analyze(eval_fields, category=final_category)
 
     extracted_payload = {
         "fields": fields,
@@ -233,12 +237,10 @@ async def update_scan(
     if fields.get("manufacturer_details"): mfg_parts.append(fields["manufacturer_details"])
     if fields.get("address"): mfg_parts.append(fields["address"])
     if fields.get("importer"): mfg_parts.append(f"Importer: {fields['importer']}")
-    eval_fields["manufacturer_details"] = ", ".join(mfg_parts)
-
-    compliance_analysis = ComplianceAIAnalyzer.analyze(eval_fields)
-
     existing_cat = scan_result.extracted_data.get("category", "Food")
     updated_cat = category.strip() if category and category.strip() else existing_cat
+
+    compliance_analysis = ComplianceAIAnalyzer.analyze(eval_fields, category=updated_cat)
 
     extracted_payload = {
         "fields": fields,

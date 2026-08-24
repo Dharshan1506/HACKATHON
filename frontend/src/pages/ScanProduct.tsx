@@ -330,7 +330,15 @@ export const ScanProduct: React.FC = () => {
                       <div className="text-3xl font-black text-white">{report.compliance_score}%</div>
                       <div className="text-[11px] text-slate-400 font-semibold">Compliance Score</div>
                     </div>
-                    <span className={`badge-${report.compliance_status.toLowerCase()} text-sm py-2 px-3.5 font-bold`}>
+                    <span className={`text-sm py-2 px-3.5 font-bold rounded-full border ${
+                      report.compliance_status === 'PASS'
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                        : report.compliance_status === 'WARNING'
+                          ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                          : report.compliance_status === 'MANUAL REVIEW'
+                            ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                            : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                    }`}>
                       {report.compliance_status}
                     </span>
                   </div>
@@ -348,7 +356,7 @@ export const ScanProduct: React.FC = () => {
                 </div>
 
                 {/* Score Breakdown Pills */}
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
                     <div className="text-xl font-bold text-emerald-400">{report.passed_count || 0}</div>
                     <div className="text-[11px] text-emerald-300 font-medium">Passed Rules</div>
@@ -357,6 +365,11 @@ export const ScanProduct: React.FC = () => {
                   <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
                     <div className="text-xl font-bold text-amber-400">{report.warnings_count || 0}</div>
                     <div className="text-[11px] text-amber-300 font-medium">Warnings</div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-center">
+                    <div className="text-xl font-bold text-purple-400">{report.manual_review_count || (report.details as any)?.manual_review_count || 0}</div>
+                    <div className="text-[11px] text-purple-300 font-medium">Manual Review</div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-center">
@@ -606,7 +619,15 @@ export const ScanProduct: React.FC = () => {
                           </span>
                           <span className="font-bold text-white text-sm">{check.title}</span>
                         </div>
-                        <span className={`badge-${check.status.toLowerCase()} self-start sm:self-auto`}>
+                        <span className={`text-xs font-bold px-2.5 py-1 rounded-full border self-start sm:self-auto ${
+                          check.status === 'PASS'
+                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                            : check.status === 'WARNING'
+                              ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                              : check.status === 'MANUAL REVIEW'
+                                ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                                : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                        }`}>
                           {check.status}
                         </span>
                       </div>

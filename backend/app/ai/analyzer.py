@@ -8,22 +8,22 @@ class ComplianceAIAnalyzer:
     """
 
     @classmethod
-    def analyze(cls, extracted_data: Dict[str, Any]) -> Dict[str, Any]:
+    def analyze(cls, extracted_data: Dict[str, Any], category: str = "ALL") -> Dict[str, Any]:
         """
         Executes full Legal Metrology audit and produces structured compliance analysis.
         """
-        # Execute Legal Metrology Rule checks
-        rule_eval = LegalMetrologyRulesEngine.validate_extracted_data(extracted_data)
+        # Execute deterministic Legal Metrology Rule checks
+        rule_eval = LegalMetrologyRulesEngine.validate_extracted_data(extracted_data, category=category)
 
         score = rule_eval["score"]
         status = rule_eval["status"]
         risk_level = rule_eval["risk_level"]
         rule_checks = rule_eval["rule_checks"]
 
-        # Synthesize executive summary & AI key insights
+        # Synthesize executive summary & deterministic insights
         summary = cls._generate_summary(extracted_data, score, status, risk_level, rule_checks)
         key_action_items = [
-            rule["remediation"] for rule in rule_checks if rule["status"] in ["FAIL", "WARNING"]
+            rule["remediation"] for rule in rule_checks if rule["status"] in ["FAIL", "WARNING", "MANUAL REVIEW"]
         ]
 
         return {
@@ -34,6 +34,7 @@ class ComplianceAIAnalyzer:
             "passed_count": rule_eval["passed_count"],
             "warnings_count": rule_eval["warnings_count"],
             "violations_count": rule_eval["violations_count"],
+            "manual_review_count": rule_eval.get("manual_review_count", 0),
             "rule_checks": rule_checks,
             "action_items": key_action_items if key_action_items else ["Packaging fully complies with Legal Metrology (Packaged Commodities) Rules, 2011."]
         }

@@ -1,0 +1,153 @@
+{
+  "version": "2.4.0",
+  "statute": "Legal Metrology Act 2009 & Packaged Commodities Rules 2011",
+  "updated_at": "2026-08-24T22:30:00Z",
+  "rules": [
+    {
+      "id": "RULE_6_1_A",
+      "code": "LM-RULE-6-1-A",
+      "title": "Manufacturer / Packer / Importer Address",
+      "clause": "Rule 6(1)(a) of Legal Metrology (Packaged Commodities) Rules 2011",
+      "description": "Name and complete registered office/factory address of the manufacturer, packer, or importer must be clearly declared.",
+      "field": "manufacturer_details",
+      "weight": 15,
+      "applicable_categories": ["ALL"],
+      "severity": "CRITICAL",
+      "params": {
+        "required_structure_keywords": ["mfd", "manufactured", "packed", "imported", "marketed", "ltd", "pvt", "corp", "inc", "co."],
+        "location_indicators": ["street", "road", "industrial", "estate", "area", "dist", "state", "india", "pin", "plot", "building", "floor", "sector", "lane"],
+        "postal_code_pattern": "\\b[1-9][0-9]{5}\\b",
+        "min_length": 15
+      },
+      "remediation": "Provide full corporate/packer name and complete address including city, state, and 6-digit PIN code."
+    },
+    {
+      "id": "RULE_6_1_B",
+      "code": "LM-RULE-6-1-B",
+      "title": "Generic / Common Name of Commodity",
+      "clause": "Rule 6(1)(b) of Legal Metrology Rules 2011",
+      "description": "The generic or common name of the commodity contained in the package must be prominent on the Principal Display Panel.",
+      "field": "commodity_name",
+      "weight": 15,
+      "applicable_categories": ["ALL"],
+      "severity": "CRITICAL",
+      "params": {
+        "min_length": 3,
+        "disallowed_vague_terms": ["product", "item", "goods", "sample", "unknown"]
+      },
+      "remediation": "Declare the common or generic name of the commodity clearly on the principal display panel."
+    },
+    {
+      "id": "RULE_6_1_C",
+      "code": "LM-RULE-6-1-C",
+      "title": "Net Quantity & Standard Units",
+      "clause": "Rule 6(1)(c) & Rule 7 / Rule 8 of Legal Metrology Rules",
+      "description": "Net quantity in standard metric units (g, kg, ml, l, N, pcs) with space between numeral and unit symbol.",
+      "field": "net_quantity",
+      "weight": 20,
+      "applicable_categories": ["ALL"],
+      "severity": "CRITICAL",
+      "params": {
+        "metric_units": ["g", "kg", "ml", "l", "ltr", "grams", "kilograms", "n", "pcs", "units"],
+        "disallowed_non_metric": ["lbs", "lb", "oz", "ounce", "fl oz", "fluid ounce", "gallons", "pints", "feet", "inch"],
+        "unit_spacing_required": true
+      },
+      "remediation": "State net quantity using standard metric units (e.g. '500 g', '1 kg', '250 ml', '1 N') with a space separating numeral and unit symbol."
+    },
+    {
+      "id": "RULE_6_1_D",
+      "code": "LM-RULE-6-1-D",
+      "title": "Month & Year of Manufacture / Packing",
+      "clause": "Rule 6(1)(d) of Legal Metrology Rules 2011",
+      "description": "Date of manufacture/packing/import in MM/YYYY, Month Year, or DD/MM/YYYY format.",
+      "field": "mfg_date",
+      "weight": 15,
+      "applicable_categories": ["ALL"],
+      "severity": "MAJOR",
+      "params": {
+        "valid_date_regex": "(\\b(0[1-9]|1[0-2])[\\/\\-.](20[1-3][0-9]|[1-3][0-9])\\b|\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\\s,.-]+(20[1-3][0-9]|[1-3][0-9])\\b)",
+        "year_indicators": ["2023", "2024", "2025", "2026", "2027"]
+      },
+      "remediation": "Print manufacturing month & year prominently as 'Mfg Date: MM/YYYY' (e.g., 08/2026)."
+    },
+    {
+      "id": "RULE_6_1_E",
+      "code": "LM-RULE-6-1-E",
+      "title": "Maximum Retail Price (MRP)",
+      "clause": "Rule 6(1)(e) of Legal Metrology Rules 2011",
+      "description": "MRP declared as 'MRP Rs. XX.XX (inclusive of all taxes)' or '₹ XX (incl. of all taxes)'.",
+      "field": "mrp",
+      "weight": 15,
+      "applicable_categories": ["ALL"],
+      "severity": "CRITICAL",
+      "params": {
+        "mrp_prefixes": ["mrp", "m.r.p", "max retail price", "maximum retail price", "rs", "₹", "inr"],
+        "tax_inclusivity_phrases": ["incl", "inclusive", "all taxes", "inclusive of all taxes"]
+      },
+      "remediation": "State 'MRP Rs. XX.XX (inclusive of all taxes)' clearly on the packaging."
+    },
+    {
+      "id": "RULE_6_1_E_USP",
+      "code": "LM-RULE-6-1-E-USP",
+      "title": "Unit Sale Price (USP)",
+      "clause": "Rule 6(1)(e) Amendment 2021",
+      "description": "Unit Sale Price declared alongside MRP in Rs per g / kg / ml / l / unit.",
+      "field": "unit_sale_price",
+      "weight": 10,
+      "applicable_categories": ["ALL"],
+      "severity": "MAJOR",
+      "params": {
+        "usp_pattern": "((?:usp|unit\\s*price|₹\\s*\\/?\\s*g|rs\\.?\\s*\\/?\\s*g|per\\s*g|per\\s*kg|per\\s*ml|per\\s*l|per\\s*unit))"
+      },
+      "remediation": "Declare Unit Sale Price (e.g. '₹ 1.10 per g' or '₹ 50 per kg') as mandated under the 2021 Metrology Amendments."
+    },
+    {
+      "id": "RULE_6_1_F",
+      "code": "LM-RULE-6-1-F",
+      "title": "Consumer Care Details",
+      "clause": "Rule 6(1)(f) of Legal Metrology Rules 2011",
+      "description": "Name, address, telephone number, and email address of person/office to be contacted in case of consumer complaints.",
+      "field": "customer_care",
+      "weight": 10,
+      "applicable_categories": ["ALL"],
+      "severity": "MAJOR",
+      "params": {
+        "require_email": true,
+        "require_phone": true,
+        "phone_min_digits": 8
+      },
+      "remediation": "Provide telephone helpline number, email ID, and physical address under 'Customer Care Cell'."
+    },
+    {
+      "id": "RULE_6_1_G",
+      "code": "LM-RULE-6-1-G",
+      "title": "Country of Origin & Importer Declaration",
+      "clause": "Rule 6(1)(g) & Rule 6(10) of Legal Metrology Rules",
+      "description": "Mandatory declaration of Country of Origin and registered Importer details for imported packaged commodities.",
+      "field": "country_of_origin",
+      "weight": 10,
+      "applicable_categories": ["Imported Goods"],
+      "severity": "CRITICAL",
+      "params": {
+        "require_origin_country": true,
+        "require_importer_name": true
+      },
+      "remediation": "Explicitly declare 'Country of Origin: [Country]' and 'Imported & Marketed By: [Importer Name, Address]'."
+    },
+    {
+      "id": "RULE_6_1_H",
+      "code": "LM-RULE-6-1-H",
+      "title": "Best Before / Expiry Period",
+      "clause": "Rule 6(1)(d) & FSSAI / Cosmetic Mandate",
+      "description": "Mandatory Best Before / Expiry declaration for perishable, food, and cosmetic commodities.",
+      "field": "expiry_date",
+      "weight": 10,
+      "applicable_categories": ["Food", "Cosmetics"],
+      "severity": "MAJOR",
+      "params": {
+        "expiry_keywords": ["best before", "expiry", "exp date", "use by", "months from mfg", "months from packaging"]
+      },
+      "remediation": "Declare 'Best Before XX Months from Packaging/Mfg' or precise expiry date 'Exp: MM/YYYY'."
+    }
+  ]
+}

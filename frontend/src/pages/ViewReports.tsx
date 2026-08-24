@@ -64,12 +64,12 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
         </div>
 
         {/* Status Tabs */}
-        <div className="flex items-center gap-1.5 bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800 self-start md:self-auto">
-          {['ALL', 'PASS', 'WARNING', 'FAIL'].map((st) => (
+        <div className="flex flex-wrap items-center gap-1.5 bg-slate-900/80 p-1.5 rounded-2xl border border-slate-800 self-start md:self-auto">
+          {['ALL', 'PASS', 'WARNING', 'MANUAL REVIEW', 'FAIL'].map((st) => (
             <button
               key={st}
               onClick={() => setStatusFilter(st)}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
                 statusFilter === st
                   ? 'bg-slate-800 text-cyan-400 border border-cyan-500/30 shadow-sm'
                   : 'text-slate-400 hover:text-white'
@@ -131,7 +131,15 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
                   <span className="text-xs text-slate-400">{rep.category}</span>
                 </div>
                 <div className="text-right">
-                  <span className={`badge-${rep.compliance_status.toLowerCase()}`}>
+                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${
+                    rep.compliance_status === 'PASS'
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                      : rep.compliance_status === 'WARNING'
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                        : rep.compliance_status === 'MANUAL REVIEW'
+                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                          : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                  }`}>
                     {rep.compliance_status} ({rep.compliance_score}%)
                   </span>
                   <div className="text-[11px] text-slate-500 mt-1 font-mono">
@@ -170,7 +178,15 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
                   <span className="text-xs font-mono font-bold text-cyan-400 px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/20">
                     {selectedReport.report_code}
                   </span>
-                  <span className={`badge-${selectedReport.compliance_status.toLowerCase()}`}>
+                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full border ${
+                    selectedReport.compliance_status === 'PASS'
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                      : selectedReport.compliance_status === 'WARNING'
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                        : selectedReport.compliance_status === 'MANUAL REVIEW'
+                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                          : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                  }`}>
                     {selectedReport.compliance_status} ({selectedReport.compliance_score}%)
                   </span>
                 </div>
@@ -209,7 +225,15 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
                         </span>
                         <span className="font-bold text-white text-sm">{check.title}</span>
                       </div>
-                      <span className={`badge-${check.status.toLowerCase()} self-start sm:self-auto`}>
+                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full border self-start sm:self-auto ${
+                        check.status === 'PASS'
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                          : check.status === 'WARNING'
+                            ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                            : check.status === 'MANUAL REVIEW'
+                              ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+                              : 'bg-rose-500/10 text-rose-400 border-rose-500/20'
+                      }`}>
                         {check.status}
                       </span>
                     </div>
