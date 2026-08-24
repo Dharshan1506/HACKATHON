@@ -1,5 +1,7 @@
-import re
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+
+import re
 import logging
 from typing import Dict, Any, List, Tuple
 from PIL import Image
@@ -25,7 +27,7 @@ def get_easyocr_reader():
 
 class OCREngine:
     """
-    Real OCR Engine for Packaged Commodities.
+    Real Deep Learning OCR Engine for Packaged Commodities.
     Extracts authentic text, computes bounding boxes, and parses Legal Metrology declarations.
     """
 
@@ -84,7 +86,6 @@ class OCREngine:
         # Try PyTesseract as fallback
         try:
             import pytesseract
-            # Check default tesseract binary locations on Windows
             tess_paths = [
                 r"C:\Program Files\Tesseract-OCR\tesseract.exe",
                 r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
@@ -97,7 +98,6 @@ class OCREngine:
 
             if os.path.exists(image_path):
                 img = Image.open(image_path)
-                # Extract text data with bounding boxes
                 data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
                 n_boxes = len(data['text'])
                 for i in range(n_boxes):
