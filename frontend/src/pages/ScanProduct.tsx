@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
-  Camera, UploadCloud, RefreshCw, Download, ShieldCheck, Edit3, Sparkles
+  Camera, UploadCloud, RefreshCw, Download, ShieldCheck, 
+  Trash2, AlertTriangle, 
+  Code2, Sparkles, Scale, Info
 } from 'lucide-react';
 import { scanProductImage, getPdfDownloadUrl } from '../services/api';
 import type { ComplianceReport, MandatoryRuleCheck } from '../types';
@@ -12,39 +14,60 @@ export const ScanProduct: React.FC = () => {
   const [category, setCategory] = useState('Packaged Food');
   const [isScanning, setIsScanning] = useState(false);
   const [report, setReport] = useState<ComplianceReport | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [showRawText, setShowRawText] = useState(false);
+  
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+      const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+      
+      if (!validTypes.includes(file.type) && !file.name.match(/\.(jpg|jpeg|png|webp)$/i)) {
+        setErrorMsg('Please upload a valid image file (JPG, JPEG, PNG, or WEBP).');
+        return;
+      }
+
+      setErrorMsg(null);
       setSelectedFile(file);
       setPreviewUrl(URL.createObjectURL(file));
       setReport(null);
     }
   };
 
-  const handleSampleSelect = (filename: string, name: string) => {
-    setProductName(name);
-    const blob = new Blob(["sample label"], { type: "image/jpeg" });
-    const file = new File([blob], filename, { type: "image/jpeg" });
-    setSelectedFile(file);
-    setPreviewUrl(`https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=600&q=80`);
+  const handleRemoveImage = () => {
+    setSelectedFile(null);
+    setPreviewUrl(null);
     setReport(null);
+    setErrorMsg(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
-  const handleScan = async () => {
-    if (!selectedFile) return;
+  const handleStartComplianceCheck = async () => {
+    if (!selectedFile) {
+      setErrorMsg('Please select or upload a packaging image first.');
+      return;
+    }
+
     setIsScanning(true);
+    setErrorMsg(null);
 
     try {
       const formData = new FormData();
       formData.append('file', selectedFile);
-      if (productName) formData.append('product_name', productName);
+      if (productName.trim()) {
+        formData.append('product_name', productName.trim());
+      }
       formData.append('category', category);
 
       const res = await scanProductImage(formData);
       setReport(res);
-    } catch (err) {
-      console.error("Scan error:", err);
+    } catch (err: any) {
+      console.error("Compliance Check error:", err);
+      setErrorMsg(err.response?.data?.detail || 'Failed to connect to backend server. Please verify FastAPI is running.');
     } finally {
       setIsScanning(false);
     }
@@ -53,118 +76,129 @@ export const ScanProduct: React.FC = () => {
   const ruleChecks: MandatoryRuleCheck[] = report?.details?.rule_checks || [];
 
   return (
-    <div className="space-y-10 pb-12">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 glass-card p-8 rounded-2xl border border-slate-800">
+    <div className="space-y-10 pb-16">
+      {/* Page Title & Breadcrumb */}
+      <div className="glass-card p-8 rounded-3xl border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 text-cyan-400 text-xs font-semibold mb-2">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 text-cyan-400 text-xs font-semibold mb-2 border border-cyan-500/20">
             <Camera className="w-3.5 h-3.5" />
-            <span>AI Label Scanner</span>
+            <span>Product Scan Hub</span>
           </div>
-          <h1 className="text-3xl font-black text-white">Scan Product Packaging Label</h1>
+          <h1 className="text-3xl font-black text-white tracking-tight">
+            Packaging Compliance Scanner
+          </h1>
           <p className="text-slate-400 text-sm mt-1">
-            Capture or upload product packaging to verify mandatory Legal Metrology declarations.
+            Upload product artwork to perform authentic OCR extraction and Legal Metrology Rules (2011) compliance verification.
           </p>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs font-mono text-slate-400 bg-slate-900/80 px-4 py-2 rounded-xl border border-slate-800">
+          <Scale className="w-4 h-4 text-cyan-400" />
+          <span>Section 36 / PCR 2011</span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Left Input & Preview Panel */}
-        <div className="lg:col-span-5 space-y-6">
-          <div className="glass-card p-6 rounded-2xl border border-slate-800 space-y-6">
-            <h3 className="text-lg font-bold text-white flex items-center justify-between">
-              <span>Select Label Image</span>
-              <span className="text-xs text-slate-400 font-normal">Formats: JPG, PNG, WEBP</span>
-            </h3>
+      {errorMsg && (
+        <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-sm flex items-center justify-between animate-shake">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 flex-shrink-0" />
+            <span>{errorMsg}</span>
+          </div>
+          <button onClick={() => setErrorMsg(null)} className="text-xs hover:underline font-bold">
+            Dismiss
+          </button>
+        </div>
+      )}
 
-            {/* Quick Sample Selector */}
-            <div className="space-y-2">
-              <label className="text-xs text-slate-400 font-medium">Or Quick Test with Sample Labels:</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleSampleSelect('cooking_oil.jpg', 'SunPure Cooking Oil 1L')}
-                  className="px-3 py-2 text-xs rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 hover:text-white text-left transition-colors"
-                >
-                  🌻 Cooking Oil 1L
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSampleSelect('choco_biscuit.jpg', 'NutriBite Biscuits 120g')}
-                  className="px-3 py-2 text-xs rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 hover:text-white text-left transition-colors"
-                >
-                  🍪 Choco Biscuits 120g
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSampleSelect('herbal_shampoo.jpg', 'Botanica Shampoo 250ml')}
-                  className="px-3 py-2 text-xs rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 hover:text-white text-left transition-colors"
-                >
-                  🧴 Hair Shampoo 250ml
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSampleSelect('organic_milk.jpg', 'PureNature Almond Milk 1L')}
-                  className="px-3 py-2 text-xs rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 hover:text-white text-left transition-colors"
-                >
-                  🥛 Almond Milk 1L
-                </button>
-              </div>
+      {/* Main Upload & Scan Interface */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+        {/* Left Column: Upload, Preview & Controls */}
+        <div className="lg:col-span-5 space-y-6">
+          <div className="glass-card p-6 sm:p-7 rounded-3xl border border-slate-800 space-y-6 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-white text-base">1. Upload Packaging Image</h3>
+              <span className="text-[11px] text-slate-400 font-mono">JPG, PNG, WEBP</span>
             </div>
 
-            {/* Upload Dropzone */}
-            <div className="relative border-2 border-dashed border-slate-700 hover:border-cyan-500 rounded-xl p-6 text-center cursor-pointer transition-colors bg-slate-900/50">
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleFileChange}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              />
-              {previewUrl ? (
-                <div className="relative group">
+            {/* Dropzone / Preview Area */}
+            {!previewUrl ? (
+              <div 
+                onClick={() => fileInputRef.current?.click()}
+                className="group relative border-2 border-dashed border-slate-700 hover:border-cyan-500/70 rounded-2xl p-8 text-center cursor-pointer transition-all duration-200 bg-slate-900/40 hover:bg-slate-900/70 flex flex-col items-center justify-center min-h-[260px]"
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/jpg,image/png,image/webp"
+                  onChange={handleFileChange}
+                  className="hidden"
+                />
+                <div className="w-14 h-14 rounded-2xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center group-hover:scale-110 group-hover:bg-cyan-500 group-hover:text-white transition-all shadow-lg mb-4">
+                  <UploadCloud className="w-7 h-7" />
+                </div>
+                <p className="text-sm font-bold text-white mb-1">
+                  Click to select packaging photo
+                </p>
+                <p className="text-xs text-slate-400 max-w-xs">
+                  Upload principal display panel or nutrition/label side of product
+                </p>
+                <div className="mt-4 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-slate-800 text-slate-300 text-[11px] font-mono">
+                  <span>Supports: JPG, JPEG, PNG, WEBP</span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Image Preview */}
+                <div className="relative rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 shadow-inner group">
                   <img
                     src={previewUrl}
-                    alt="Packaging preview"
-                    className="max-h-64 mx-auto rounded-lg object-contain shadow-lg"
+                    alt="Packaging label preview"
+                    className="w-full max-h-80 object-contain mx-auto rounded-xl p-2"
                   />
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center rounded-lg transition-opacity">
-                    <span className="text-white text-xs font-semibold flex items-center gap-1.5">
-                      <RefreshCw className="w-4 h-4" /> Change Image
-                    </span>
+                  <div className="absolute top-3 right-3 flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleRemoveImage}
+                      className="p-2 rounded-xl bg-rose-500/80 hover:bg-rose-600 text-white shadow-lg backdrop-blur-md transition-all hover:scale-105"
+                      title="Remove Image"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-              ) : (
-                <div className="space-y-3 py-4">
-                  <div className="w-12 h-12 rounded-full bg-cyan-500/10 text-cyan-400 mx-auto flex items-center justify-center">
-                    <UploadCloud className="w-6 h-6" />
-                  </div>
-                  <div className="text-sm text-slate-300">
-                    <span className="font-bold text-cyan-400">Click to upload</span> or drag and drop
-                  </div>
-                  <p className="text-xs text-slate-500">Packaging principal display panel photo</p>
-                </div>
-              )}
-            </div>
 
-            {/* Metadata Fields */}
-            <div className="space-y-4">
+                <div className="flex items-center justify-between text-xs text-slate-400 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                  <span className="truncate max-w-[200px] font-mono text-slate-300">
+                    {selectedFile?.name}
+                  </span>
+                  <span>{selectedFile ? (selectedFile.size / 1024).toFixed(1) : 0} KB</span>
+                </div>
+              </div>
+            )}
+
+            {/* Optional Metadata Inputs */}
+            <div className="space-y-4 pt-2 border-t border-slate-800/80">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Product Name / Commodity (Optional)</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Product / Commodity Name (Optional override)
+                </label>
                 <input
                   type="text"
-                  placeholder="e.g. Refined Sunflower Oil"
+                  placeholder="e.g. Pure Wheat Flour / Almond Butter"
                   value={productName}
                   onChange={(e) => setProductName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-cyan-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-cyan-500 transition-colors"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Product Category</label>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Commodity Category
+                </label>
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-cyan-500"
+                  className="w-full px-3.5 py-2.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-100 text-sm focus:outline-none focus:border-cyan-500 transition-colors"
                 >
                   <option value="Packaged Food">Packaged Food</option>
                   <option value="Dairy & Beverages">Dairy & Beverages</option>
@@ -174,105 +208,198 @@ export const ScanProduct: React.FC = () => {
                 </select>
               </div>
 
-              <button
-                onClick={handleScan}
-                disabled={!selectedFile || isScanning}
-                className="w-full py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 disabled:opacity-50 text-white font-bold text-sm shadow-lg shadow-cyan-500/20 flex items-center justify-center gap-2 transition-all"
-              >
-                {isScanning ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Running OCR & AI Compliance Check...</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="w-5 h-5" />
-                    <span>Analyze Packaging Compliance</span>
-                  </>
+              {/* Action Buttons */}
+              <div className="pt-2 flex flex-col gap-2.5">
+                <button
+                  type="button"
+                  onClick={handleStartComplianceCheck}
+                  disabled={!selectedFile || isScanning}
+                  className="w-full py-4 rounded-2xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 disabled:opacity-50 text-white font-bold text-sm shadow-xl shadow-cyan-500/25 flex items-center justify-center gap-2.5 transition-all active:scale-[0.98]"
+                >
+                  {isScanning ? (
+                    <>
+                      <RefreshCw className="w-5 h-5 animate-spin" />
+                      <span>Extracting OCR & Evaluating Rules...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-5 h-5" />
+                      <span>Start Compliance Check</span>
+                    </>
+                  )}
+                </button>
+
+                {previewUrl && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveImage}
+                    className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-850 text-slate-400 hover:text-rose-400 text-xs font-semibold border border-slate-800 flex items-center justify-center gap-1.5 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    <span>Remove Image & Reset</span>
+                  </button>
                 )}
-              </button>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Right Audit Results Display */}
+        {/* Right Column: Real Compliance Results Display */}
         <div className="lg:col-span-7 space-y-6">
           {report ? (
-            <div className="space-y-6">
-              {/* Summary Card */}
-              <div className="glass-card p-6 rounded-2xl border border-slate-800 space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+            <div className="space-y-6 animate-fade-in">
+              {/* Executive Score & Verdict Card */}
+              <div className="glass-card p-7 rounded-3xl border border-slate-800 space-y-5 shadow-xl">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-800">
                   <div>
-                    <span className="text-xs font-mono text-cyan-400 font-bold">{report.report_code}</span>
-                    <h2 className="text-xl font-bold text-white mt-0.5">{report.product_name}</h2>
+                    <span className="text-xs font-mono text-cyan-400 font-bold px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/20">
+                      {report.report_code}
+                    </span>
+                    <h2 className="text-2xl font-black text-white mt-1.5">{report.product_name}</h2>
+                    <p className="text-xs text-slate-400">Category: {report.category}</p>
                   </div>
-                  <div className="flex items-center gap-3">
+
+                  <div className="flex items-center gap-4">
                     <div className="text-right">
-                      <div className="text-2xl font-black text-white">{report.compliance_score}%</div>
-                      <div className="text-[11px] text-slate-400 font-medium">Score</div>
+                      <div className="text-3xl font-black text-white">{report.compliance_score}%</div>
+                      <div className="text-[11px] text-slate-400 font-semibold">Compliance Score</div>
                     </div>
-                    <span className={`badge-${report.compliance_status.toLowerCase()} py-1.5 px-3 text-sm`}>
+                    <span className={`badge-${report.compliance_status.toLowerCase()} text-sm py-2 px-3.5 font-bold`}>
                       {report.compliance_status}
                     </span>
                   </div>
                 </div>
 
-                <p className="text-slate-300 text-sm leading-relaxed bg-slate-900/60 p-4 rounded-xl border border-slate-800">
-                  {report.summary}
-                </p>
-
-                <div className="flex flex-wrap items-center justify-between gap-4 pt-2">
-                  <div className="flex items-center gap-4 text-xs font-semibold text-slate-300">
-                    <span className="text-emerald-400">✓ {report.passed_count || 0} Passed</span>
-                    <span className="text-amber-400">⚠ {report.warnings_count || 0} Warnings</span>
-                    <span className="text-rose-400">✗ {report.violations_count || 0} Failures</span>
+                {/* Summary Box */}
+                <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-1.5">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>AI Compliance Assessment</span>
                   </div>
+                  <p className="text-sm text-slate-200 leading-relaxed">
+                    {report.summary}
+                  </p>
+                </div>
+
+                {/* Score Breakdown Pills */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                    <div className="text-xl font-bold text-emerald-400">{report.passed_count || 0}</div>
+                    <div className="text-[11px] text-emerald-300 font-medium">Passed Rules</div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
+                    <div className="text-xl font-bold text-amber-400">{report.warnings_count || 0}</div>
+                    <div className="text-[11px] text-amber-300 font-medium">Warnings</div>
+                  </div>
+
+                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-center">
+                    <div className="text-xl font-bold text-rose-400">{report.violations_count || 0}</div>
+                    <div className="text-[11px] text-rose-300 font-medium">Violations</div>
+                  </div>
+                </div>
+
+                {/* Actions & Export */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setShowRawText(!showRawText)}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 text-xs font-semibold border border-slate-800 transition-colors"
+                  >
+                    <Code2 className="w-4 h-4 text-cyan-400" />
+                    <span>{showRawText ? "Hide Raw OCR Text" : "View Extracted Text"}</span>
+                  </button>
 
                   <a
                     href={getPdfDownloadUrl(report.id)}
                     target="_blank"
                     rel="noreferrer"
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-bold transition-all"
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all"
                   >
                     <Download className="w-4 h-4" />
-                    <span>Download Official PDF Report</span>
+                    <span>Download Official PDF Certificate</span>
                   </a>
                 </div>
+
+                {/* Toggleable Raw OCR Output */}
+                {showRawText && (
+                  <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
+                    <div className="text-xs font-mono font-bold text-slate-400">Authentic Raw OCR Extracted Stream:</div>
+                    <pre className="text-xs font-mono text-cyan-300 whitespace-pre-wrap max-h-48 overflow-y-auto p-3 bg-slate-900/80 rounded-xl border border-slate-850">
+                      {report.details?.raw_text || "No raw text recorded."}
+                    </pre>
+                  </div>
+                )}
               </div>
 
-              {/* Extracted Fields Breakdown */}
-              <div className="glass-card p-6 rounded-2xl border border-slate-800 space-y-4">
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <Edit3 className="w-5 h-5 text-cyan-400" />
-                  <span>OCR Extracted Declarations</span>
-                </h3>
+              {/* 7 Mandatory Legal Declarations Breakdown */}
+              <div className="glass-card p-7 rounded-3xl border border-slate-800 space-y-5 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                    <Scale className="w-5 h-5 text-cyan-400" />
+                    <span>7 Mandatory Declarations Audit (PCR 2011)</span>
+                  </h3>
+                  <span className="text-xs text-slate-400 font-mono">
+                    {ruleChecks.length} Criteria Checked
+                  </span>
+                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-3.5">
                   {ruleChecks.map((check) => (
-                    <div key={check.rule_id} className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-mono font-bold text-cyan-400">{check.rule_code}</span>
-                        <span className={`badge-${check.status.toLowerCase()}`}>{check.status}</span>
+                    <div key={check.rule_id} className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition-colors space-y-2.5">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-mono font-bold text-cyan-400 px-2 py-0.5 rounded bg-cyan-500/10">
+                            {check.rule_code}
+                          </span>
+                          <span className="font-bold text-white text-sm">{check.title}</span>
+                        </div>
+                        <span className={`badge-${check.status.toLowerCase()} self-start sm:self-auto`}>
+                          {check.status}
+                        </span>
                       </div>
-                      <div className="font-bold text-slate-100 text-sm">{check.title}</div>
-                      <div className="text-xs font-mono text-slate-300 bg-slate-950 p-2 rounded border border-slate-850 truncate">
-                        {check.value || <span className="text-rose-400 italic">Not Declared / Missing</span>}
+
+                      <div className="text-[11px] text-slate-400 italic">
+                        {check.clause}
                       </div>
-                      <p className="text-[11px] text-slate-400 leading-tight">{check.finding}</p>
+
+                      <div className="text-xs font-mono bg-slate-950 p-2.5 rounded-xl border border-slate-850 text-slate-200 truncate">
+                        <span className="text-slate-400">Extracted Value: </span>
+                        {check.value ? (
+                          <span className="text-emerald-400 font-semibold">{check.value}</span>
+                        ) : (
+                          <span className="text-rose-400 italic font-semibold">Missing / Undetected</span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs pt-1">
+                        <div className="text-slate-300">
+                          <span className="font-semibold text-slate-400">Finding: </span>
+                          {check.finding}
+                        </div>
+                        <div className="text-cyan-300">
+                          <span className="font-semibold text-cyan-400">Remediation: </span>
+                          {check.remediation}
+                        </div>
+                      </div>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
           ) : (
-            <div className="glass-card p-12 rounded-2xl border border-slate-800 text-center space-y-4 flex flex-col items-center justify-center min-h-[400px]">
-              <div className="w-16 h-16 rounded-2xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center border border-cyan-500/20">
+            <div className="glass-card p-12 rounded-3xl border border-slate-800 text-center space-y-4 flex flex-col items-center justify-center min-h-[440px] shadow-xl">
+              <div className="w-16 h-16 rounded-3xl bg-cyan-500/10 text-cyan-400 flex items-center justify-center border border-cyan-500/20 shadow-inner">
                 <Sparkles className="w-8 h-8" />
               </div>
-              <h3 className="text-xl font-bold text-white">Ready to Verify Packaging</h3>
-              <p className="text-slate-400 text-sm max-w-md">
-                Select an image on the left or click one of the quick test sample labels to run OCR and Legal Metrology rules analysis.
+              <h3 className="text-xl font-bold text-white">No Compliance Audit Yet</h3>
+              <p className="text-slate-400 text-sm max-w-md leading-relaxed">
+                Upload or select a product packaging label on the left and click <b>Start Compliance Check</b> to extract declarations and verify statutory Legal Metrology compliance.
               </p>
+              <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400 max-w-sm flex items-center gap-2 text-left">
+                <Info className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+                <span>Extracts Net Qty, MRP, Unit Sale Price, Mfg Date, Address, and Customer Care.</span>
+              </div>
             </div>
           )}
         </div>
