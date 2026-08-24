@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { 
   Camera, UploadCloud, RefreshCw, Download, ShieldCheck, 
   Trash2, AlertTriangle, 
-  Code2, Sparkles, Scale, Info, Edit3
+  Code2, Sparkles, Scale, Info, Edit3, Maximize2, X, CheckCheck, ListChecks
 } from 'lucide-react';
 import { scanProductImage, getPdfDownloadUrl, updateScanResult } from '../services/api';
 import type { ComplianceReport, MandatoryRuleCheck } from '../types';
@@ -17,6 +17,8 @@ export const ScanProduct: React.FC = () => {
   const [report, setReport] = useState<ComplianceReport | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showRawText, setShowRawText] = useState(false);
+  const [checkFilter, setCheckFilter] = useState<'ALL' | 'FAIL' | 'WARNING' | 'PASS' | 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'>('ALL');
+  const [showImageModal, setShowImageModal] = useState<boolean>(false);
   const [fields, setFields] = useState<Record<string, string>>({
     commodity_name: '',
     brand: '',
@@ -134,6 +136,16 @@ export const ScanProduct: React.FC = () => {
   };
 
   const ruleChecks: MandatoryRuleCheck[] = report?.details?.rule_checks || [];
+  const filteredRuleChecks = ruleChecks.filter((c) => {
+    if (checkFilter === 'ALL') return true;
+    if (checkFilter === 'FAIL') return c.status === 'FAIL';
+    if (checkFilter === 'WARNING') return c.status === 'WARNING';
+    if (checkFilter === 'PASS') return c.status === 'PASS';
+    if (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(checkFilter)) {
+      return c.priority === checkFilter;
+    }
+    return true;
+  });
 
   return (
     <div className="space-y-10 pb-16">
@@ -311,18 +323,34 @@ export const ScanProduct: React.FC = () => {
           {report ? (
             <div className="space-y-6 animate-fade-in">
               {/* Executive Score & Verdict Card */}
-              <div className="glass-card p-7 rounded-3xl border border-slate-800 space-y-5 shadow-xl">
+              <div className="glass-card p-7 rounded-3xl border border-slate-800 space-y-6 shadow-xl">
+                
+                {/* Header with Product Image Thumbnail & Identity */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-slate-800">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-mono text-cyan-400 font-bold px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/20">
-                        {report.report_code}
-                      </span>
-                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                        {report.category || category || 'Food'}
-                      </span>
+                  <div className="flex items-center gap-4">
+                    {previewUrl && (
+                      <div 
+                        onClick={() => setShowImageModal(true)}
+                        className="relative group w-16 h-16 rounded-2xl overflow-hidden border border-slate-700 bg-slate-950 flex-shrink-0 cursor-pointer shadow-md"
+                        title="Click to view full image"
+                      >
+                        <img src={previewUrl} alt="Product label" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                          <Maximize2 className="w-4 h-4 text-cyan-300" />
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-cyan-400 font-bold px-2.5 py-1 rounded bg-cyan-500/10 border border-cyan-500/20">
+                          {report.report_code}
+                        </span>
+                        <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                          {report.category || category || 'Food'}
+                        </span>
+                      </div>
+                      <h2 className="text-2xl font-black text-white mt-1.5">{report.product_name}</h2>
                     </div>
-                    <h2 className="text-2xl font-black text-white mt-1.5">{report.product_name}</h2>
                   </div>
 
                   <div className="flex items-center gap-4">
@@ -344,111 +372,122 @@ export const ScanProduct: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Deterministic Compliance Score Calculation Box */}
-                <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 text-slate-400 text-xs font-bold uppercase tracking-wider">
-                    <span className="flex items-center gap-1.5 text-cyan-400">
-                      <Scale className="w-4 h-4" />
-                      <span>Formula: Score = Passed Rule Weight / Total Applicable Rule Weight × 100</span>
-                    </span>
-                    <span className="font-mono text-cyan-300 font-bold text-xs">
-                      {report.details?.formula || `Score = ${report.compliance_score}%`}
-                    </span>
-                  </div>
-
-                  {/* 4 Score Tiers Scale */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
-                    <div className={`p-2.5 rounded-xl border text-center transition-all ${
-                      report.compliance_score >= 90
-                        ? 'bg-emerald-500/20 border-emerald-500 ring-1 ring-emerald-500/50 shadow-md shadow-emerald-500/10'
-                        : 'bg-emerald-500/5 border-emerald-500/10 opacity-70'
-                    }`}>
-                      <div className="font-extrabold text-emerald-400 text-xs">90 – 100%</div>
-                      <div className="text-[10px] text-emerald-300 font-bold uppercase tracking-wider">COMPLIANT</div>
-                    </div>
-
-                    <div className={`p-2.5 rounded-xl border text-center transition-all ${
-                      report.compliance_score >= 70 && report.compliance_score < 90
-                        ? 'bg-cyan-500/20 border-cyan-500 ring-1 ring-cyan-500/50 shadow-md shadow-cyan-500/10'
-                        : 'bg-cyan-500/5 border-cyan-500/10 opacity-70'
-                    }`}>
-                      <div className="font-extrabold text-cyan-400 text-xs">70 – 89%</div>
-                      <div className="text-[10px] text-cyan-300 font-bold uppercase tracking-wider">MOSTLY COMPLIANT</div>
-                    </div>
-
-                    <div className={`p-2.5 rounded-xl border text-center transition-all ${
-                      report.compliance_score >= 40 && report.compliance_score < 70
-                        ? 'bg-amber-500/20 border-amber-500 ring-1 ring-amber-500/50 shadow-md shadow-amber-500/10'
-                        : 'bg-amber-500/5 border-amber-500/10 opacity-70'
-                    }`}>
-                      <div className="font-extrabold text-amber-400 text-xs">40 – 69%</div>
-                      <div className="text-[10px] text-amber-300 font-bold uppercase tracking-wider">NEEDS REVIEW</div>
-                    </div>
-
-                    <div className={`p-2.5 rounded-xl border text-center transition-all ${
-                      report.compliance_score < 40
-                        ? 'bg-rose-500/20 border-rose-500 ring-1 ring-rose-500/50 shadow-md shadow-rose-500/10'
-                        : 'bg-rose-500/5 border-rose-500/10 opacity-70'
-                    }`}>
-                      <div className="font-extrabold text-rose-400 text-xs">0 – 39%</div>
-                      <div className="text-[10px] text-rose-300 font-bold uppercase tracking-wider">HIGH RISK</div>
-                    </div>
-                  </div>
-                </div>
-
                 {/* Summary Box */}
                 <div className="p-4 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-1.5">
                   <div className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                    <span>AI Compliance Assessment</span>
+                    <span>AI Statutory Assessment</span>
                   </div>
                   <p className="text-sm text-slate-200 leading-relaxed">
                     {report.summary}
                   </p>
                 </div>
 
-                {/* Score Breakdown Pills */}
+                {/* Status Checks Breakdown Grid */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                  <div 
+                    onClick={() => setCheckFilter('PASS')}
+                    className={`p-3 rounded-xl border text-center cursor-pointer transition-all ${
+                      checkFilter === 'PASS' 
+                        ? 'bg-emerald-500/25 border-emerald-500 ring-1 ring-emerald-500/50' 
+                        : 'bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/15'
+                    }`}
+                  >
                     <div className="text-xl font-bold text-emerald-400">{report.passed_count || 0}</div>
-                    <div className="text-[11px] text-emerald-300 font-medium">Passed Rules</div>
+                    <div className="text-[11px] text-emerald-300 font-semibold">Passed Checks</div>
                   </div>
 
-                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
-                    <div className="text-xl font-bold text-amber-400">{report.warnings_count || 0}</div>
-                    <div className="text-[11px] text-amber-300 font-medium">Warnings</div>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-purple-500/10 border border-purple-500/20 text-center">
-                    <div className="text-xl font-bold text-purple-400">{report.manual_review_count || (report.details as any)?.manual_review_count || 0}</div>
-                    <div className="text-[11px] text-purple-300 font-medium">Manual Review</div>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-center">
+                  <div 
+                    onClick={() => setCheckFilter('FAIL')}
+                    className={`p-3 rounded-xl border text-center cursor-pointer transition-all ${
+                      checkFilter === 'FAIL' 
+                        ? 'bg-rose-500/25 border-rose-500 ring-1 ring-rose-500/50' 
+                        : 'bg-rose-500/10 border-rose-500/20 hover:bg-rose-500/15'
+                    }`}
+                  >
                     <div className="text-xl font-bold text-rose-400">{report.violations_count || 0}</div>
-                    <div className="text-[11px] text-rose-300 font-medium">Violations</div>
+                    <div className="text-[11px] text-rose-300 font-semibold">Failed Checks</div>
+                  </div>
+
+                  <div 
+                    onClick={() => setCheckFilter('WARNING')}
+                    className={`p-3 rounded-xl border text-center cursor-pointer transition-all ${
+                      checkFilter === 'WARNING' 
+                        ? 'bg-amber-500/25 border-amber-500 ring-1 ring-amber-500/50' 
+                        : 'bg-amber-500/10 border-amber-500/20 hover:bg-amber-500/15'
+                    }`}
+                  >
+                    <div className="text-xl font-bold text-amber-400">{report.warnings_count || 0}</div>
+                    <div className="text-[11px] text-amber-300 font-semibold">Warnings</div>
+                  </div>
+
+                  <div 
+                    onClick={() => setCheckFilter('ALL')}
+                    className={`p-3 rounded-xl border text-center cursor-pointer transition-all ${
+                      checkFilter === 'ALL' 
+                        ? 'bg-indigo-500/25 border-indigo-500 ring-1 ring-indigo-500/50' 
+                        : 'bg-purple-500/10 border-purple-500/20 hover:bg-purple-500/15'
+                    }`}
+                  >
+                    <div className="text-xl font-bold text-purple-400">{report.manual_review_count || (report.details as any)?.manual_review_count || 0}</div>
+                    <div className="text-[11px] text-purple-300 font-semibold">Manual Review</div>
                   </div>
                 </div>
 
-                {/* Priority Severity Breakdown Row */}
+                {/* Priority Violations Breakdown Bar */}
                 <div className="flex flex-wrap items-center justify-between gap-2 p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
                   <span className="text-slate-400 font-bold uppercase tracking-wider text-[11px] flex items-center gap-1.5">
                     <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
-                    <span>Prioritized Violations Breakdown:</span>
+                    <span>Priority Violations:</span>
                   </span>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="px-2.5 py-1 rounded-lg bg-rose-500/15 text-rose-300 border border-rose-500/30 font-extrabold text-[10px] uppercase tracking-wider">
+                    <button 
+                      type="button"
+                      onClick={() => setCheckFilter('CRITICAL')}
+                      className={`px-2.5 py-1 rounded-lg border font-extrabold text-[10px] uppercase tracking-wider transition-all ${
+                        checkFilter === 'CRITICAL'
+                          ? 'bg-rose-500/30 text-rose-200 border-rose-400 ring-1 ring-rose-400'
+                          : 'bg-rose-500/15 text-rose-300 border-rose-500/30 hover:bg-rose-500/25'
+                      }`}
+                    >
                       {report.critical_violations_count || (report.details as any)?.critical_violations_count || (report.details?.rule_checks || []).filter(r => r.priority === 'CRITICAL' && r.status !== 'PASS').length} CRITICAL
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-orange-500/15 text-orange-300 border border-orange-500/30 font-extrabold text-[10px] uppercase tracking-wider">
+                    </button>
+
+                    <button 
+                      type="button"
+                      onClick={() => setCheckFilter('HIGH')}
+                      className={`px-2.5 py-1 rounded-lg border font-extrabold text-[10px] uppercase tracking-wider transition-all ${
+                        checkFilter === 'HIGH'
+                          ? 'bg-orange-500/30 text-orange-200 border-orange-400 ring-1 ring-orange-400'
+                          : 'bg-orange-500/15 text-orange-300 border-orange-500/30 hover:bg-orange-500/25'
+                      }`}
+                    >
                       {report.high_violations_count || (report.details as any)?.high_violations_count || (report.details?.rule_checks || []).filter(r => r.priority === 'HIGH' && r.status !== 'PASS').length} HIGH
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-purple-500/15 text-purple-300 border border-purple-500/30 font-extrabold text-[10px] uppercase tracking-wider">
+                    </button>
+
+                    <button 
+                      type="button"
+                      onClick={() => setCheckFilter('MEDIUM')}
+                      className={`px-2.5 py-1 rounded-lg border font-extrabold text-[10px] uppercase tracking-wider transition-all ${
+                        checkFilter === 'MEDIUM'
+                          ? 'bg-purple-500/30 text-purple-200 border-purple-400 ring-1 ring-purple-400'
+                          : 'bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25'
+                      }`}
+                    >
                       {report.medium_violations_count || (report.details as any)?.medium_violations_count || (report.details?.rule_checks || []).filter(r => r.priority === 'MEDIUM' && r.status !== 'PASS').length} MEDIUM
-                    </span>
-                    <span className="px-2.5 py-1 rounded-lg bg-blue-500/15 text-blue-300 border border-blue-500/30 font-extrabold text-[10px] uppercase tracking-wider">
+                    </button>
+
+                    <button 
+                      type="button"
+                      onClick={() => setCheckFilter('LOW')}
+                      className={`px-2.5 py-1 rounded-lg border font-extrabold text-[10px] uppercase tracking-wider transition-all ${
+                        checkFilter === 'LOW'
+                          ? 'bg-blue-500/30 text-blue-200 border-blue-400 ring-1 ring-blue-400'
+                          : 'bg-blue-500/15 text-blue-300 border-blue-500/30 hover:bg-blue-500/25'
+                      }`}
+                    >
                       {report.low_violations_count || (report.details as any)?.low_violations_count || (report.details?.rule_checks || []).filter(r => r.priority === 'LOW' && r.status !== 'PASS').length} LOW
-                    </span>
+                    </button>
                   </div>
                 </div>
 
@@ -478,36 +517,34 @@ export const ScanProduct: React.FC = () => {
                 {showRawText && (
                   <div className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
                     <div>
-                      <div className="text-xs font-mono font-bold text-slate-400 mb-2">Authentic Raw OCR Extracted Stream:</div>
-                      <pre className="text-xs font-mono text-cyan-300 whitespace-pre-wrap max-h-48 overflow-y-auto p-3 bg-slate-900/80 rounded-xl border border-slate-850">
-                        {report.details?.raw_text || "No raw text recorded."}
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Raw Text Extracted via PaddleOCR:</h4>
+                      <pre className="p-3.5 rounded-xl bg-slate-900 text-cyan-400 font-mono text-xs overflow-x-auto whitespace-pre-wrap max-h-48 border border-slate-800">
+                        {report.details?.raw_text || "No raw text detected."}
                       </pre>
                     </div>
 
-                    {/* Detected Text Segments with Bounding Boxes & Confidence */}
                     {report.details?.bounding_boxes && report.details.bounding_boxes.length > 0 && (
-                      <div className="space-y-2 pt-2 border-t border-slate-900">
-                        <div className="text-xs font-mono font-bold text-slate-400">OCR Bounding Boxes & Confidences:</div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto pr-1">
-                          {report.details.bounding_boxes.map((boxItem: any, index: number) => (
-                            <div key={index} className="p-2.5 rounded-xl bg-slate-900 border border-slate-850 flex items-center justify-between text-xs">
-                              <div className="space-y-0.5 truncate pr-2">
-                                <div className="text-slate-150 font-semibold truncate text-[11px]">{boxItem.text}</div>
-                                <div className="text-[10px] text-slate-500 font-mono">
-                                  Box: [{boxItem.box ? boxItem.box.join(', ') : '0, 0, 0, 0'}]
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+                          Detected Text Segments ({report.details.bounding_boxes.length} Bounding Boxes):
+                        </h4>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+                          {report.details.bounding_boxes.map((b: any, idx: number) => {
+                            const conf = Math.round((b.confidence || 0.85) * 100);
+                            return (
+                              <div key={idx} className="p-2 rounded-lg bg-slate-900/80 border border-slate-800 flex items-center justify-between text-xs">
+                                <div className="truncate pr-2">
+                                  <div className="text-slate-200 font-medium truncate">{b.text || b.label}</div>
+                                  <div className="text-[10px] text-slate-500 font-mono">Box: [{b.box ? b.box.join(', ') : '0,0,0,0'}]</div>
                                 </div>
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                  conf >= 85 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                }`}>
+                                  {conf}%
+                                </span>
                               </div>
-                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
-                                boxItem.confidence >= 0.85 
-                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                                  : boxItem.confidence >= 0.7 
-                                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' 
-                                    : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                              }`}>
-                                {Math.round(boxItem.confidence * 100)}%
-                              </span>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -515,21 +552,62 @@ export const ScanProduct: React.FC = () => {
                 )}
               </div>
 
-              {/* Review & Correct Extracted Declarations Form */}
-              <div className="glass-card p-7 rounded-3xl border border-slate-800 space-y-5 shadow-xl">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              {/* Actionable Regulatory Recommendations Section */}
+              <div className="glass-card p-7 rounded-3xl border border-slate-800 space-y-4 shadow-xl">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
                   <h3 className="font-bold text-white text-base flex items-center gap-2">
-                    <Edit3 className="w-5 h-5 text-cyan-400" />
-                    <span>Review & Correct Extracted Declarations</span>
+                    <ListChecks className="w-5 h-5 text-cyan-400" />
+                    <span>Statutory Packaging Recommendations</span>
                   </h3>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI/NLP Fields</span>
+                  <span className="text-[10px] font-bold uppercase px-2.5 py-1 rounded-md bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                    Remediation Plan
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  {ruleChecks.filter(r => r.status !== 'PASS').length > 0 ? (
+                    ruleChecks.filter(r => r.status !== 'PASS').map((r, idx) => (
+                      <div key={r.rule_id} className="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-start gap-3">
+                        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 ${
+                          r.priority === 'CRITICAL' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40' :
+                          r.priority === 'HIGH' ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40' :
+                          'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                        }`}>
+                          {idx + 1}
+                        </span>
+                        <div className="space-y-1 flex-1">
+                          <div className="flex flex-wrap items-center justify-between gap-1">
+                            <span className="font-bold text-white text-xs">{r.title}</span>
+                            <span className="text-[10px] font-mono text-slate-400">{r.clause}</span>
+                          </div>
+                          <p className="text-xs text-cyan-300 leading-relaxed">{r.remediation}</p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center gap-3 text-emerald-300 text-xs">
+                      <CheckCheck className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                      <span>Packaging artwork complies with all statutory Legal Metrology declarations. Ready for commercial market distribution.</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Review & Correct Extracted Declarations Form */}
+              <div className="glass-card p-7 rounded-3xl border border-slate-800 space-y-4 shadow-xl">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+                  <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Edit3 className="w-4 h-4 text-cyan-400" />
+                    <span>Review & Correct Extracted Declarations</span>
+                  </h4>
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Editable Fields</span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Product Category</label>
                     <select
-                      value={fields.category || category || 'Food'}
+                      value={fields.category || 'Food'}
                       onChange={(e) => setFields({ ...fields, category: e.target.value })}
                       className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
                     >
@@ -560,7 +638,7 @@ export const ScanProduct: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Manufacturer Name</label>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Manufacturer Details</label>
                     <input
                       type="text"
                       value={fields.manufacturer_details || ''}
@@ -569,7 +647,7 @@ export const ScanProduct: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Manufacturer Address</label>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Address</label>
                     <input
                       type="text"
                       value={fields.address || ''}
@@ -578,7 +656,7 @@ export const ScanProduct: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Importer Name</label>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Importer Name (If Imported)</label>
                     <input
                       type="text"
                       value={fields.importer || ''}
@@ -596,7 +674,7 @@ export const ScanProduct: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Consumer Care Details</label>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Customer Care Contacts</label>
                     <input
                       type="text"
                       value={fields.customer_care || ''}
@@ -671,20 +749,43 @@ export const ScanProduct: React.FC = () => {
                 </button>
               </div>
 
-              {/* 7 Mandatory Legal Declarations Breakdown */}
+              {/* Mandatory Legal Declarations Detailed Audit Explorer */}
               <div className="glass-card p-7 rounded-3xl border border-slate-800 space-y-5 shadow-xl">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-bold text-white text-lg flex items-center gap-2">
-                    <Scale className="w-5 h-5 text-cyan-400" />
-                    <span>7 Mandatory Declarations Audit (PCR 2011)</span>
-                  </h3>
-                  <span className="text-xs text-slate-400 font-mono">
-                    {ruleChecks.length} Criteria Checked
-                  </span>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                  <div>
+                    <h3 className="font-bold text-white text-lg flex items-center gap-2">
+                      <Scale className="w-5 h-5 text-cyan-400" />
+                      <span>Legal Metrology Statutory Declarations Audit</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">Audit verified against Packaged Commodities Rules 2011</p>
+                  </div>
+
+                  {/* Filter Tabs */}
+                  <div className="flex flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                    {[
+                      { id: 'ALL', label: `All (${ruleChecks.length})` },
+                      { id: 'FAIL', label: `Failed (${report.violations_count})` },
+                      { id: 'WARNING', label: `Warnings (${report.warnings_count})` },
+                      { id: 'PASS', label: `Passed (${report.passed_count})` }
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setCheckFilter(tab.id as any)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
+                          checkFilter === tab.id
+                            ? 'bg-slate-800 text-cyan-400 border border-cyan-500/30'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div className="space-y-3.5">
-                  {ruleChecks.map((check) => (
+                  {filteredRuleChecks.map((check) => (
                     <div key={check.rule_id} className="p-4 rounded-2xl bg-slate-900/70 border border-slate-800 hover:border-slate-700 transition-colors space-y-2.5">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-2">
@@ -742,6 +843,12 @@ export const ScanProduct: React.FC = () => {
                       </div>
                     </div>
                   ))}
+
+                  {filteredRuleChecks.length === 0 && (
+                    <div className="p-8 text-center text-slate-400 text-xs rounded-2xl bg-slate-900/40 border border-slate-800">
+                      No statutory checks match the selected filter.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -762,6 +869,22 @@ export const ScanProduct: React.FC = () => {
           )}
         </div>
       </div>
+
+      {/* Lightbox Modal for Product Image Preview */}
+      {showImageModal && previewUrl && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setShowImageModal(false)}>
+          <div className="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-700 rounded-3xl p-4 shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <button 
+              type="button" 
+              onClick={() => setShowImageModal(false)}
+              className="absolute top-4 right-4 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-white z-10 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <img src={previewUrl} alt="Product label full preview" className="max-h-[80vh] w-auto mx-auto rounded-xl object-contain" />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

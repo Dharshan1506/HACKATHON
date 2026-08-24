@@ -1341,29 +1341,41 @@ async def index_ui():
             <p class="text-xs text-slate-400 max-w-sm">Upload a product label photo and click Start Compliance Check to extract declarations and evaluate Legal Metrology Act compliance.</p>
           </div>
 
-          <div id="scan-results" class="hidden space-y-5">
-            <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-4">
-              <div class="flex items-start justify-between border-b border-slate-800 pb-4">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <span id="res-code" class="text-xs font-mono text-cyan-400 font-bold"></span>
-                    <span id="res-category" class="text-[11px] px-2.5 py-0.5 rounded-md bg-indigo-500/10 text-indigo-400 font-semibold border border-indigo-500/20"></span>
+          <div id="scan-results" class="hidden space-y-6">
+            <!-- Executive Compliance Verdict Card -->
+            <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-5 shadow-xl">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                <div class="flex items-center gap-3.5">
+                  <div id="res-img-container" onclick="openImageModal()" class="relative group w-14 h-14 rounded-2xl overflow-hidden border border-slate-700 bg-slate-950 flex-shrink-0 cursor-pointer shadow-md" title="Click to view full image">
+                    <img id="res-img-thumb" class="w-full h-full object-cover group-hover:scale-110 transition-transform">
+                    <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                      <i data-lucide="maximize-2" class="w-3.5 h-3.5 text-cyan-300"></i>
+                    </div>
                   </div>
-                  <h3 id="res-name" class="text-xl font-bold text-white mt-0.5"></h3>
+                  <div>
+                    <div class="flex items-center gap-2">
+                      <span id="res-code" class="text-xs font-mono text-cyan-400 font-bold px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20"></span>
+                      <span id="res-category" class="text-[11px] px-2.5 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-semibold border border-indigo-500/20"></span>
+                    </div>
+                    <h3 id="res-name" class="text-xl font-bold text-white mt-1"></h3>
+                  </div>
                 </div>
-                <div class="text-right">
-                  <div id="res-score" class="text-3xl font-black text-white"></div>
-                  <span id="res-status" class="inline-block mt-1"></span>
+
+                <div class="flex items-center gap-3">
+                  <div class="text-right">
+                    <div id="res-score" class="text-3xl font-black text-white"></div>
+                    <div class="text-[10px] text-slate-400 font-semibold">Deterministic Score</div>
+                  </div>
+                  <span id="res-status" class="inline-block"></span>
                 </div>
               </div>
-              <p id="res-summary" class="text-xs text-slate-300 bg-slate-900/80 p-3 rounded-xl border border-slate-850 leading-relaxed"></p>
 
-              <!-- Deterministic Score Formula & 4-Tier Gauge -->
+              <!-- Deterministic Score Formula & 4-Tier Scale -->
               <div class="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5 text-xs">
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-slate-400 font-bold text-[11px] uppercase tracking-wider">
                   <span class="flex items-center gap-1.5 text-cyan-400">
                     <i data-lucide="calculator" class="w-3.5 h-3.5"></i>
-                    <span>Formula: Score = Passed Weight / Total Weight × 100</span>
+                    <span>Formula: Score = Passed Weight / Total Applicable Weight × 100</span>
                   </span>
                   <span id="res-formula-text" class="font-mono text-cyan-300 font-bold"></span>
                 </div>
@@ -1389,39 +1401,89 @@ async def index_ui():
                 </div>
               </div>
 
-              <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-b border-slate-800 pb-3 mb-2">
-                <div class="flex flex-wrap items-center gap-1.5 text-xs font-semibold">
-                  <span class="text-slate-400 mr-1 text-[11px] uppercase tracking-wider">Priority Breakdown:</span>
-                  <span id="res-pri-critical" class="priority-critical">0 CRITICAL</span>
-                  <span id="res-pri-high" class="priority-high">0 HIGH</span>
-                  <span id="res-pri-medium" class="priority-medium">0 MEDIUM</span>
-                  <span id="res-pri-low" class="priority-low">0 LOW</span>
+              <!-- Summary Box -->
+              <div class="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-1">
+                <div class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <i data-lucide="sparkles" class="w-3.5 h-3.5 text-cyan-400"></i>
+                  <span>AI Statutory Assessment</span>
                 </div>
-                <a id="res-pdf-link" target="_blank" class="px-4 py-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-xs font-bold hover:bg-emerald-500/20">
-                  <i data-lucide="download" class="w-3.5 h-3.5 inline-block mr-1"></i> Download PDF
+                <p id="res-summary" class="text-xs text-slate-200 leading-relaxed"></p>
+              </div>
+
+              <!-- Status Checks Breakdown Grid -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+                <div onclick="filterChecks('PASS')" class="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 cursor-pointer transition-all">
+                  <div id="res-count-passed" class="text-lg font-bold text-emerald-400">0</div>
+                  <div class="text-[10px] text-emerald-300 font-semibold uppercase">Passed Checks</div>
+                </div>
+                <div onclick="filterChecks('FAIL')" class="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 cursor-pointer transition-all">
+                  <div id="res-count-violations" class="text-lg font-bold text-rose-400">0</div>
+                  <div class="text-[10px] text-rose-300 font-semibold uppercase">Failed Checks</div>
+                </div>
+                <div onclick="filterChecks('WARNING')" class="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 cursor-pointer transition-all">
+                  <div id="res-count-warnings" class="text-lg font-bold text-amber-400">0</div>
+                  <div class="text-[10px] text-amber-300 font-semibold uppercase">Warnings</div>
+                </div>
+                <div onclick="filterChecks('MANUAL REVIEW')" class="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 cursor-pointer transition-all">
+                  <div id="res-count-review" class="text-lg font-bold text-purple-400">0</div>
+                  <div class="text-[10px] text-purple-300 font-semibold uppercase">Manual Review</div>
+                </div>
+              </div>
+
+              <!-- Priority Violations Breakdown Bar -->
+              <div class="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
+                <span class="text-slate-400 font-bold uppercase tracking-wider text-[10px] flex items-center gap-1">
+                  <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-rose-400"></i>
+                  <span>Priority Violations:</span>
+                </span>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <button onclick="filterPriority('CRITICAL')" id="res-pri-critical" class="priority-critical cursor-pointer hover:opacity-90">0 CRITICAL</button>
+                  <button onclick="filterPriority('HIGH')" id="res-pri-high" class="priority-high cursor-pointer hover:opacity-90">0 HIGH</button>
+                  <button onclick="filterPriority('MEDIUM')" id="res-pri-medium" class="priority-medium cursor-pointer hover:opacity-90">0 MEDIUM</button>
+                  <button onclick="filterPriority('LOW')" id="res-pri-low" class="priority-low cursor-pointer hover:opacity-90">0 LOW</button>
+                </div>
+              </div>
+
+              <!-- Quick Action Buttons -->
+              <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800">
+                <button onclick="toggleRawOcr()" class="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-850 text-slate-300 text-xs font-semibold border border-slate-800 flex items-center gap-1.5">
+                  <i data-lucide="code-2" class="w-3.5 h-3.5 text-cyan-400"></i>
+                  <span id="ocr-toggle-text">Show Detected OCR Segments</span>
+                </button>
+                <a id="res-pdf-link" target="_blank" class="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all flex items-center gap-1.5">
+                  <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                  <span>Download Official PDF Certificate</span>
                 </a>
               </div>
-              <div class="space-y-2">
-                <button onclick="toggleRawOcr()" class="text-xs text-cyan-400 hover:underline font-bold flex items-center gap-1">
-                  <i data-lucide="eye" class="w-3.5 h-3.5"></i> <span id="ocr-toggle-text">Show Detected Bounding Boxes & Confidence</span>
-                </button>
-                <div id="ocr-details-box" class="hidden p-3 rounded-xl bg-slate-950 border border-slate-850 text-xs space-y-3">
-                  <div class="font-mono text-slate-400 text-[10px]">Raw OCR Stream:</div>
-                  <pre id="raw-ocr-stream" class="whitespace-pre-wrap max-h-32 overflow-y-auto text-cyan-400 font-mono text-[10px] bg-slate-900 p-2 rounded-lg"></pre>
-                  <div class="font-mono text-slate-400 text-[10px]">OCR Text Segments & Confidence:</div>
-                  <div id="ocr-segments-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto"></div>
-                </div>
+
+              <div id="ocr-details-box" class="hidden p-3.5 rounded-xl bg-slate-950 border border-slate-850 text-xs space-y-3">
+                <div class="font-mono text-slate-400 text-[10px]">Raw OCR Stream:</div>
+                <pre id="raw-ocr-stream" class="whitespace-pre-wrap max-h-32 overflow-y-auto text-cyan-400 font-mono text-[10px] bg-slate-900 p-2 rounded-lg"></pre>
+                <div class="font-mono text-slate-400 text-[10px]">OCR Text Segments & Confidence:</div>
+                <div id="ocr-segments-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto"></div>
               </div>
             </div>
 
+            <!-- Actionable Recommendations & Remediation Checklist -->
+            <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-3.5 shadow-xl">
+              <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+                <h4 class="text-sm font-bold text-white flex items-center gap-2">
+                  <i data-lucide="list-checks" class="w-4 h-4 text-cyan-400"></i>
+                  <span>Statutory Packaging Recommendations</span>
+                </h4>
+                <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Remediation Checklist</span>
+              </div>
+              <div id="recommendations-list" class="space-y-2.5"></div>
+            </div>
+
             <!-- Review & Correct Extracted Declarations Form -->
-            <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-4">
+            <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-4 shadow-xl">
               <div class="flex items-center justify-between border-b border-slate-800 pb-3">
                 <h4 class="text-sm font-bold text-white flex items-center gap-1.5">
                   <i data-lucide="edit-3" class="w-4 h-4 text-cyan-400"></i>
                   <span>Review & Correct Extracted Declarations</span>
                 </h4>
-                <span class="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">AI/NLP Structured Data</span>
+                <span class="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">Editable Fields</span>
               </div>
               
               <input type="hidden" id="edit-report-id">
@@ -1447,15 +1509,15 @@ async def index_ui():
                   <input type="text" id="edit-commodity_name" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
                 </div>
                 <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Manufacturer Name</label>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Manufacturer Details</label>
                   <input type="text" id="edit-manufacturer_details" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
                 </div>
                 <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Manufacturer Address</label>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Address</label>
                   <input type="text" id="edit-address" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
                 </div>
                 <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Importer Name</label>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Importer Name (If Imported)</label>
                   <input type="text" id="edit-importer" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
                 </div>
                 <div>
@@ -1463,7 +1525,7 @@ async def index_ui():
                   <input type="text" id="edit-country_of_origin" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
                 </div>
                 <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Customer Care Details</label>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Customer Care Contacts</label>
                   <input type="text" id="edit-customer_care" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
                 </div>
                 <div>
@@ -1493,14 +1555,22 @@ async def index_ui():
               </button>
             </div>
 
-            <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-4">
-              <h4 class="text-sm font-bold text-white">7 Mandatory Declarations Audit Breakdown</h4>
+            <!-- Mandatory Legal Declarations Detailed Audit Explorer -->
+            <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-4 shadow-xl">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                <h4 class="text-sm font-bold text-white flex items-center gap-2">
+                  <i data-lucide="scale" class="w-4 h-4 text-cyan-400"></i>
+                  <span>Legal Metrology Statutory Declarations Audit</span>
+                </h4>
+                <div class="flex flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
+                  <button onclick="filterChecks('ALL')" id="tab-all" class="px-2.5 py-1 rounded-lg font-bold text-cyan-400 bg-slate-800">All</button>
+                  <button onclick="filterChecks('FAIL')" id="tab-fail" class="px-2.5 py-1 rounded-lg font-bold text-slate-400 hover:text-white">Failed</button>
+                  <button onclick="filterChecks('WARNING')" id="tab-warning" class="px-2.5 py-1 rounded-lg font-bold text-slate-400 hover:text-white">Warnings</button>
+                  <button onclick="filterChecks('PASS')" id="tab-pass" class="px-2.5 py-1 rounded-lg font-bold text-slate-400 hover:text-white">Passed</button>
+                </div>
+              </div>
               <div id="rules-list" class="space-y-3"></div>
             </div>
-          </div>
-        </div>
-      </div>
-    </div>
           </div>
         </div>
       </div>
@@ -1522,6 +1592,16 @@ async def index_ui():
     </div>
   </main>
 
+  <!-- Lightbox Image Modal -->
+  <div id="image-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4" onclick="closeImageModal()">
+    <div class="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-700 rounded-3xl p-4 shadow-2xl overflow-hidden" onclick="event.stopPropagation()">
+      <button type="button" onclick="closeImageModal()" class="absolute top-4 right-4 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-white z-10 transition-colors">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
+      <img id="modal-img" class="max-h-[80vh] w-auto mx-auto rounded-xl object-contain">
+    </div>
+  </div>
+
   <!-- Footer -->
   <footer class="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
     © 2026 PackSure AI – Legal Metrology Compliance Checker. India Legal Metrology (Packaged Commodities) Rules, 2011.
@@ -1529,6 +1609,8 @@ async def index_ui():
 
   <script>
     let currentFile = null;
+    let currentReportData = null;
+    let activeFilter = 'ALL';
 
     function switchTab(tab) {
       ['home', 'scan', 'reports'].forEach(t => {
@@ -1552,7 +1634,10 @@ async def index_ui():
         document.getElementById('upload-prompt').classList.add('hidden');
         const container = document.getElementById('preview-container');
         container.classList.remove('hidden');
-        document.getElementById('preview-img').src = URL.createObjectURL(currentFile);
+        const url = URL.createObjectURL(currentFile);
+        document.getElementById('preview-img').src = url;
+        document.getElementById('res-img-thumb').src = url;
+        document.getElementById('modal-img').src = url;
         document.getElementById('preview-actions').classList.remove('hidden');
         document.getElementById('file-info').innerText = currentFile.name + ' (' + (currentFile.size/1024).toFixed(1) + ' KB)';
         lucide.createIcons();
@@ -1561,12 +1646,215 @@ async def index_ui():
 
     function removeImage() {
       currentFile = null;
+      currentReportData = null;
       document.getElementById('file-input').value = '';
       document.getElementById('preview-container').classList.add('hidden');
       document.getElementById('upload-prompt').classList.remove('hidden');
       document.getElementById('preview-actions').classList.add('hidden');
       document.getElementById('scan-results').classList.add('hidden');
       document.getElementById('scan-placeholder').classList.remove('hidden');
+    }
+
+    function openImageModal() {
+      document.getElementById('image-modal').classList.remove('hidden');
+    }
+
+    function closeImageModal() {
+      document.getElementById('image-modal').classList.add('hidden');
+    }
+
+    function renderRuleChecksList() {
+      if (!currentReportData) return;
+      const list = document.getElementById('rules-list');
+      list.innerHTML = '';
+      const allChecks = currentReportData.details?.rule_checks || [];
+      
+      const filtered = allChecks.filter(r => {
+        if (activeFilter === 'ALL') return true;
+        if (activeFilter === 'FAIL') return r.status === 'FAIL';
+        if (activeFilter === 'WARNING') return r.status === 'WARNING';
+        if (activeFilter === 'PASS') return r.status === 'PASS';
+        if (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(activeFilter)) {
+          return (r.priority || 'LOW') === activeFilter;
+        }
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        list.innerHTML = '<div class="p-6 text-center text-slate-500 text-xs rounded-2xl bg-slate-900/40 border border-slate-800">No declarations match the active filter.</div>';
+        return;
+      }
+
+      filtered.forEach(r => {
+        const item = document.createElement('div');
+        const ruleStatusSlug = (r.status || 'pass').toLowerCase().replace(/\s+/g, '-');
+        const priSlug = (r.priority || 'low').toLowerCase();
+        item.className = 'p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-xs';
+        item.innerHTML = `
+          <div class="flex justify-between items-center">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
+              <span class="priority-${priSlug}">${r.priority || 'LOW'} PRIORITY</span>
+            </div>
+            <span class="badge-${ruleStatusSlug}">${r.status}</span>
+          </div>
+          <div class="font-bold text-white">${r.title}</div>
+          <div class="text-[10px] text-slate-400 italic">${r.clause || ''}</div>
+          <div class="text-[11px] font-mono text-slate-300 bg-slate-950 p-2 rounded truncate"><span class="text-slate-500">Extracted:</span> ${r.value || 'Not Declared / Missing'}</div>
+          <div class="text-slate-300"><span class="text-slate-500 font-semibold">Finding:</span> ${r.finding}</div>
+          <div class="text-cyan-300 pt-0.5"><span class="text-cyan-500 font-semibold">Action:</span> ${r.remediation}</div>
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    function filterChecks(filterType) {
+      activeFilter = filterType;
+      ['all', 'fail', 'warning', 'pass'].forEach(t => {
+        const el = document.getElementById('tab-' + t);
+        if (el) {
+          if (t.toUpperCase() === filterType) {
+            el.className = 'px-2.5 py-1 rounded-lg font-bold text-cyan-400 bg-slate-800';
+          } else {
+            el.className = 'px-2.5 py-1 rounded-lg font-bold text-slate-400 hover:text-white';
+          }
+        }
+      });
+      renderRuleChecksList();
+    }
+
+    function filterPriority(priType) {
+      activeFilter = priType;
+      renderRuleChecksList();
+    }
+
+    function renderRecommendations(checks) {
+      const recList = document.getElementById('recommendations-list');
+      recList.innerHTML = '';
+      const issues = checks.filter(r => r.status !== 'PASS');
+      if (issues.length === 0) {
+        recList.innerHTML = `
+          <div class="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
+            <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400 flex-shrink-0"></i>
+            <span>Packaging label is fully compliant with Legal Metrology requirements. Ready for commercial market distribution.</span>
+          </div>
+        `;
+        return;
+      }
+      issues.forEach((r, idx) => {
+        const item = document.createElement('div');
+        const priClass = r.priority === 'CRITICAL' ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' :
+                         r.priority === 'HIGH' ? 'bg-orange-500/20 text-orange-300 border-orange-500/40' :
+                         'bg-purple-500/20 text-purple-300 border-purple-500/40';
+        item.className = 'p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-start gap-2.5 text-xs';
+        item.innerHTML = `
+          <span class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border flex-shrink-0 mt-0.5 ${priClass}">${idx + 1}</span>
+          <div class="space-y-0.5 flex-1">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-white">${r.title}</span>
+              <span class="text-[10px] font-mono text-slate-400">${r.clause || ''}</span>
+            </div>
+            <p class="text-cyan-300 leading-relaxed">${r.remediation}</p>
+          </div>
+        `;
+        recList.appendChild(item);
+      });
+    }
+
+    function populateReportData(data) {
+      currentReportData = data;
+      document.getElementById('res-code').innerText = data.report_code;
+      document.getElementById('res-name').innerText = data.product_name;
+      document.getElementById('res-category').innerText = data.category || data.detected_category || 'Food';
+      document.getElementById('res-score').innerText = data.compliance_score + '%';
+      
+      const stEl = document.getElementById('res-status');
+      const statusSlug = (data.compliance_status || 'compliant').toLowerCase().replace(/\s+/g, '-');
+      stEl.className = 'badge-' + statusSlug;
+      stEl.innerText = data.compliance_status;
+      
+      const formulaStr = data.details?.formula || `Score = Passed Weight / Total Weight × 100 = ${data.compliance_score}%`;
+      document.getElementById('res-formula-text').innerText = formulaStr;
+      document.getElementById('res-summary').innerText = data.summary;
+      
+      document.getElementById('res-count-passed').innerText = data.passed_count || 0;
+      document.getElementById('res-count-violations').innerText = data.violations_count || 0;
+      document.getElementById('res-count-warnings').innerText = data.warnings_count || 0;
+      document.getElementById('res-count-review').innerText = data.manual_review_count || 0;
+      document.getElementById('res-pdf-link').href = '/api/reports/' + data.id + '/pdf';
+
+      // Update Priority Counts
+      const checks = data.details?.rule_checks || [];
+      const priCrit = data.details?.critical_violations_count !== undefined 
+        ? data.details.critical_violations_count 
+        : checks.filter(r => r.priority === 'CRITICAL' && r.status !== 'PASS').length;
+      const priHi = data.details?.high_violations_count !== undefined 
+        ? data.details.high_violations_count 
+        : checks.filter(r => r.priority === 'HIGH' && r.status !== 'PASS').length;
+      const priMed = data.details?.medium_violations_count !== undefined 
+        ? data.details.medium_violations_count 
+        : checks.filter(r => r.priority === 'MEDIUM' && r.status !== 'PASS').length;
+      const priLo = data.details?.low_violations_count !== undefined 
+        ? data.details.low_violations_count 
+        : checks.filter(r => r.priority === 'LOW' && r.status !== 'PASS').length;
+
+      document.getElementById('res-pri-critical').innerText = `${priCrit} CRITICAL`;
+      document.getElementById('res-pri-high').innerText = `${priHi} HIGH`;
+      document.getElementById('res-pri-medium').innerText = `${priMed} MEDIUM`;
+      document.getElementById('res-pri-low').innerText = `${priLo} LOW`;
+
+      // Render Recommendations Checklist
+      renderRecommendations(checks);
+
+      // Render Filtered Rule Checks
+      renderRuleChecksList();
+
+      // Populate Review & Corrections Form
+      const fields = data.details?.fields || {};
+      document.getElementById('edit-report-id').value = data.id;
+      document.getElementById('edit-category').value = data.category || data.detected_category || 'Food';
+      document.getElementById('edit-commodity_name').value = fields.commodity_name || '';
+      document.getElementById('edit-brand').value = fields.brand || '';
+      document.getElementById('edit-manufacturer_details').value = fields.manufacturer_details || '';
+      document.getElementById('edit-address').value = fields.address || '';
+      document.getElementById('edit-importer').value = fields.importer || '';
+      document.getElementById('edit-country_of_origin').value = fields.country_of_origin || '';
+      document.getElementById('edit-customer_care').value = fields.customer_care || '';
+      document.getElementById('edit-mrp').value = fields.mrp || '';
+      document.getElementById('edit-net_quantity').value = fields.net_quantity || '';
+      document.getElementById('edit-mfg_date').value = fields.mfg_date || '';
+      document.getElementById('edit-expiry_date').value = fields.expiry_date || '';
+      document.getElementById('edit-unit_sale_price').value = fields.unit_sale_price || '';
+
+      // Populate OCR details
+      document.getElementById('raw-ocr-stream').innerText = data.details?.raw_text || 'No text detected.';
+      const segmentsList = document.getElementById('ocr-segments-list');
+      segmentsList.innerHTML = '';
+      const boxes = data.details?.bounding_boxes || [];
+      if (boxes.length === 0) {
+        segmentsList.innerHTML = '<p class="col-span-2 text-slate-500 italic text-[11px]">No bounding boxes recorded.</p>';
+      } else {
+        boxes.forEach(boxItem => {
+          const confidencePercent = Math.round((boxItem.confidence || 0.85) * 100);
+          const badgeClass = boxItem.confidence >= 0.85 
+            ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+            : boxItem.confidence >= 0.7 
+              ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' 
+              : 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
+
+          const seg = document.createElement('div');
+          seg.className = 'p-2 rounded-lg bg-slate-900 border border-slate-850 flex items-center justify-between text-[11px]';
+          seg.innerHTML = `
+            <div class="truncate pr-2">
+              <div class="text-slate-200 font-semibold truncate">${boxItem.text}</div>
+              <div class="text-[9px] text-slate-500 font-mono">Box: [${boxItem.box ? boxItem.box.join(', ') : '0,0,0,0'}]</div>
+            </div>
+            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0 ${badgeClass}">${confidencePercent}%</span>
+          `;
+          segmentsList.appendChild(seg);
+        });
+      }
+      lucide.createIcons();
     }
 
     async function startScan() {
@@ -1589,114 +1877,9 @@ async def index_ui():
         const data = await res.json();
         
         document.getElementById('scan-placeholder').classList.add('hidden');
-        const resultsEl = document.getElementById('scan-results');
-        resultsEl.classList.remove('hidden');
+        document.getElementById('scan-results').classList.remove('hidden');
 
-        document.getElementById('res-code').innerText = data.report_code;
-        document.getElementById('res-name').innerText = data.product_name;
-        document.getElementById('res-category').innerText = 'Category: ' + (data.category || data.detected_category || 'Other');
-        document.getElementById('res-score').innerText = data.compliance_score + '%';
-        
-        const stEl = document.getElementById('res-status');
-        const statusSlug = (data.compliance_status || 'compliant').toLowerCase().replace(/\s+/g, '-');
-        stEl.className = 'badge-' + statusSlug;
-        stEl.innerText = data.compliance_status;
-        
-        const formulaStr = data.details?.formula || `Score = Passed Weight / Total Weight × 100 = ${data.compliance_score}%`;
-        document.getElementById('res-formula-text').innerText = formulaStr;
-        
-        document.getElementById('res-summary').innerText = data.summary;
-        document.getElementById('res-counts').innerText = 'Passed: ' + (data.passed_count || 0) + ' | Warnings: ' + (data.warnings_count || 0) + ' | Violations: ' + (data.violations_count || 0) + ' | Review: ' + (data.manual_review_count || 0);
-        document.getElementById('res-pdf-link').href = '/api/reports/' + data.id + '/pdf';
-
-        // Update Priority Counts
-        const checks = data.details?.rule_checks || [];
-        const priCrit = data.details?.critical_violations_count !== undefined 
-          ? data.details.critical_violations_count 
-          : checks.filter(r => r.priority === 'CRITICAL' && r.status !== 'PASS').length;
-        const priHi = data.details?.high_violations_count !== undefined 
-          ? data.details.high_violations_count 
-          : checks.filter(r => r.priority === 'HIGH' && r.status !== 'PASS').length;
-        const priMed = data.details?.medium_violations_count !== undefined 
-          ? data.details.medium_violations_count 
-          : checks.filter(r => r.priority === 'MEDIUM' && r.status !== 'PASS').length;
-        const priLo = data.details?.low_violations_count !== undefined 
-          ? data.details.low_violations_count 
-          : checks.filter(r => r.priority === 'LOW' && r.status !== 'PASS').length;
-
-        document.getElementById('res-pri-critical').innerText = `${priCrit} CRITICAL`;
-        document.getElementById('res-pri-high').innerText = `${priHi} HIGH`;
-        document.getElementById('res-pri-medium').innerText = `${priMed} MEDIUM`;
-        document.getElementById('res-pri-low').innerText = `${priLo} LOW`;
-
-        // Populate Review & Corrections Form
-        const fields = data.details?.fields || {};
-        document.getElementById('edit-report-id').value = data.id;
-        document.getElementById('edit-category').value = data.category || data.detected_category || 'Food';
-        document.getElementById('edit-commodity_name').value = fields.commodity_name || '';
-        document.getElementById('edit-brand').value = fields.brand || '';
-        document.getElementById('edit-manufacturer_details').value = fields.manufacturer_details || '';
-        document.getElementById('edit-address').value = fields.address || '';
-        document.getElementById('edit-importer').value = fields.importer || '';
-        document.getElementById('edit-country_of_origin').value = fields.country_of_origin || '';
-        document.getElementById('edit-customer_care').value = fields.customer_care || '';
-        document.getElementById('edit-mrp').value = fields.mrp || '';
-        document.getElementById('edit-net_quantity').value = fields.net_quantity || '';
-        document.getElementById('edit-mfg_date').value = fields.mfg_date || '';
-        document.getElementById('edit-expiry_date').value = fields.expiry_date || '';
-        document.getElementById('edit-unit_sale_price').value = fields.unit_sale_price || '';
-
-        // Populate OCR details
-        document.getElementById('raw-ocr-stream').innerText = data.details?.raw_text || 'No text detected.';
-        const segmentsList = document.getElementById('ocr-segments-list');
-        segmentsList.innerHTML = '';
-        const boxes = data.details?.bounding_boxes || [];
-        if (boxes.length === 0) {
-          segmentsList.innerHTML = '<p class="col-span-2 text-slate-500 italic text-[11px]">No bounding boxes recorded.</p>';
-        } else {
-          boxes.forEach(boxItem => {
-            const confidencePercent = Math.round((boxItem.confidence || 0.85) * 100);
-            const badgeClass = boxItem.confidence >= 0.85 
-              ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-              : boxItem.confidence >= 0.7 
-                ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' 
-                : 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
-
-            const seg = document.createElement('div');
-            seg.className = 'p-2 rounded-lg bg-slate-900 border border-slate-850 flex items-center justify-between text-[11px]';
-            seg.innerHTML = `
-              <div class="truncate pr-2">
-                <div class="text-slate-200 font-semibold truncate">${boxItem.text}</div>
-                <div class="text-[9px] text-slate-500 font-mono">Box: [${boxItem.box ? boxItem.box.join(', ') : '0,0,0,0'}]</div>
-              </div>
-              <span class="px-1.5 py-0.5 rounded text-[9px] font-bold shrink-0 ${badgeClass}">${confidencePercent}%</span>
-            `;
-            segmentsList.appendChild(seg);
-          });
-        }
-
-        const list = document.getElementById('rules-list');
-        list.innerHTML = '';
-        (data.details?.rule_checks || []).forEach(r => {
-          const item = document.createElement('div');
-          const ruleStatusSlug = (r.status || 'pass').toLowerCase().replace(/\s+/g, '-');
-          const priSlug = (r.priority || 'low').toLowerCase();
-          item.className = 'p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-xs';
-          item.innerHTML = `
-            <div class="flex justify-between items-center">
-              <div class="flex items-center gap-2">
-                <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
-                <span class="priority-${priSlug}">${r.priority || 'LOW'} PRIORITY</span>
-              </div>
-              <span class="badge-${ruleStatusSlug}">${r.status}</span>
-            </div>
-            <div class="font-bold text-white">${r.title}</div>
-            <div class="text-[11px] font-mono text-slate-300 bg-slate-950 p-2 rounded truncate"><span class="text-slate-500">Extracted:</span> ${r.value || 'Not Declared / Missing'}</div>
-            <div class="text-slate-400"><span class="text-slate-500 font-medium">Finding:</span> ${r.finding}</div>
-            <div class="text-cyan-300 pt-0.5"><span class="text-cyan-500 font-semibold">Action:</span> ${r.remediation}</div>
-          `;
-          list.appendChild(item);
-        });
+        populateReportData(data);
       } catch (err) {
         alert('Scan failed: ' + err);
       } finally {
@@ -1732,65 +1915,7 @@ async def index_ui():
         
         const res = await fetch('/api/scan/update', { method: 'POST', body: formData });
         const data = await res.json();
-        
-        document.getElementById('res-name').innerText = data.product_name;
-        document.getElementById('res-category').innerText = 'Category: ' + (data.category || data.detected_category || 'Other');
-        document.getElementById('res-score').innerText = data.compliance_score + '%';
-        
-        const stEl = document.getElementById('res-status');
-        const statusSlug = (data.compliance_status || 'compliant').toLowerCase().replace(/\s+/g, '-');
-        stEl.className = 'badge-' + statusSlug;
-        stEl.innerText = data.compliance_status;
-        
-        const formulaStr = data.details?.formula || `Score = Passed Weight / Total Weight × 100 = ${data.compliance_score}%`;
-        document.getElementById('res-formula-text').innerText = formulaStr;
-        
-        document.getElementById('res-summary').innerText = data.summary;
-        document.getElementById('res-counts').innerText = 'Passed: ' + (data.passed_count || 0) + ' | Warnings: ' + (data.warnings_count || 0) + ' | Violations: ' + (data.violations_count || 0) + ' | Review: ' + (data.manual_review_count || 0);
-
-        // Update Priority Counts
-        const checks = data.details?.rule_checks || [];
-        const priCrit = data.details?.critical_violations_count !== undefined 
-          ? data.details.critical_violations_count 
-          : checks.filter(r => r.priority === 'CRITICAL' && r.status !== 'PASS').length;
-        const priHi = data.details?.high_violations_count !== undefined 
-          ? data.details.high_violations_count 
-          : checks.filter(r => r.priority === 'HIGH' && r.status !== 'PASS').length;
-        const priMed = data.details?.medium_violations_count !== undefined 
-          ? data.details.medium_violations_count 
-          : checks.filter(r => r.priority === 'MEDIUM' && r.status !== 'PASS').length;
-        const priLo = data.details?.low_violations_count !== undefined 
-          ? data.details.low_violations_count 
-          : checks.filter(r => r.priority === 'LOW' && r.status !== 'PASS').length;
-
-        document.getElementById('res-pri-critical').innerText = `${priCrit} CRITICAL`;
-        document.getElementById('res-pri-high').innerText = `${priHi} HIGH`;
-        document.getElementById('res-pri-medium').innerText = `${priMed} MEDIUM`;
-        document.getElementById('res-pri-low').innerText = `${priLo} LOW`;
-        
-        const list = document.getElementById('rules-list');
-        list.innerHTML = '';
-        (data.details?.rule_checks || []).forEach(r => {
-          const item = document.createElement('div');
-          const ruleStatusSlug = (r.status || 'pass').toLowerCase().replace(/\s+/g, '-');
-          const priSlug = (r.priority || 'low').toLowerCase();
-          item.className = 'p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-xs';
-          item.innerHTML = `
-            <div class="flex justify-between items-center">
-              <div class="flex items-center gap-2">
-                <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
-                <span class="priority-${priSlug}">${r.priority || 'LOW'} PRIORITY</span>
-              </div>
-              <span class="badge-${ruleStatusSlug}">${r.status}</span>
-            </div>
-            <div class="font-bold text-white">${r.title}</div>
-            <div class="text-[11px] font-mono text-slate-300 bg-slate-950 p-2 rounded truncate"><span class="text-slate-500">Extracted:</span> ${r.value || 'Not Declared / Missing'}</div>
-            <div class="text-slate-400"><span class="text-slate-500 font-medium">Finding:</span> ${r.finding}</div>
-            <div class="text-cyan-300 pt-0.5"><span class="text-cyan-500 font-semibold">Action:</span> ${r.remediation}</div>
-          `;
-          list.appendChild(item);
-        });
-        
+        populateReportData(data);
         alert('Compliance re-evaluated successfully!');
       } catch (err) {
         alert('Update failed: ' + err);
@@ -1807,7 +1932,7 @@ async def index_ui():
       const box = document.getElementById('ocr-details-box');
       const text = document.getElementById('ocr-toggle-text');
       box.classList.toggle('hidden', !showOcrDetails);
-      text.innerText = showOcrDetails ? 'Hide Detected Bounding Boxes & Confidence' : 'Show Detected Bounding Boxes & Confidence';
+      text.innerText = showOcrDetails ? 'Hide Detected OCR Segments' : 'Show Detected OCR Segments';
     }
 
     async function loadReports() {
