@@ -2,9 +2,9 @@ import React, { useState, useRef } from 'react';
 import { 
   Camera, UploadCloud, RefreshCw, Download, ShieldCheck, 
   Trash2, AlertTriangle, 
-  Code2, Sparkles, Scale, Info
+  Code2, Sparkles, Scale, Info, Edit3
 } from 'lucide-react';
-import { scanProductImage, getPdfDownloadUrl } from '../services/api';
+import { scanProductImage, getPdfDownloadUrl, updateScanResult } from '../services/api';
 import type { ComplianceReport, MandatoryRuleCheck } from '../types';
 
 export const ScanProduct: React.FC = () => {
@@ -13,9 +13,24 @@ export const ScanProduct: React.FC = () => {
   const [productName, setProductName] = useState('');
   const [category, setCategory] = useState('Packaged Food');
   const [isScanning, setIsScanning] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
   const [report, setReport] = useState<ComplianceReport | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [showRawText, setShowRawText] = useState(false);
+  const [fields, setFields] = useState<Record<string, string>>({
+    commodity_name: '',
+    brand: '',
+    manufacturer_details: '',
+    address: '',
+    importer: '',
+    country_of_origin: '',
+    customer_care: '',
+    mrp: '',
+    net_quantity: '',
+    mfg_date: '',
+    expiry_date: '',
+    unit_sale_price: ''
+  });
   
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -65,11 +80,48 @@ export const ScanProduct: React.FC = () => {
 
       const res = await scanProductImage(formData);
       setReport(res);
+      
+      const extractedFields = res.details?.fields || {};
+      setFields({
+        commodity_name: extractedFields.commodity_name || '',
+        brand: extractedFields.brand || '',
+        manufacturer_details: extractedFields.manufacturer_details || '',
+        address: extractedFields.address || '',
+        importer: extractedFields.importer || '',
+        country_of_origin: extractedFields.country_of_origin || '',
+        customer_care: extractedFields.customer_care || '',
+        mrp: extractedFields.mrp || '',
+        net_quantity: extractedFields.net_quantity || '',
+        mfg_date: extractedFields.mfg_date || '',
+        expiry_date: extractedFields.expiry_date || '',
+        unit_sale_price: extractedFields.unit_sale_price || ''
+      });
     } catch (err: any) {
       console.error("Compliance Check error:", err);
       setErrorMsg(err.response?.data?.detail || 'Failed to connect to backend server. Please verify FastAPI is running.');
     } finally {
       setIsScanning(false);
+    }
+  };
+
+  const handleUpdateCompliance = async () => {
+    if (!report) return;
+    setIsUpdating(true);
+    setErrorMsg(null);
+    try {
+      const formData = new FormData();
+      formData.append('report_id', String(report.id));
+      Object.entries(fields).forEach(([key, val]) => {
+        formData.append(key, val);
+      });
+      const res = await updateScanResult(formData);
+      setReport(res);
+      alert('Compliance re-evaluated successfully!');
+    } catch (err: any) {
+      console.error("Update error:", err);
+      setErrorMsg(err.response?.data?.detail || 'Failed to update compliance details.');
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -360,6 +412,147 @@ export const ScanProduct: React.FC = () => {
                     )}
                   </div>
                 )}
+              </div>
+
+              {/* Review & Correct Extracted Declarations Form */}
+              <div className="glass-card p-7 rounded-3xl border border-slate-800 space-y-5 shadow-xl">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                  <h3 className="font-bold text-white text-base flex items-center gap-2">
+                    <Edit3 className="w-5 h-5 text-cyan-400" />
+                    <span>Review & Correct Extracted Declarations</span>
+                  </h3>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI/NLP Fields</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Product / Commodity Name</label>
+                    <input
+                      type="text"
+                      value={fields.commodity_name || ''}
+                      onChange={(e) => setFields({ ...fields, commodity_name: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Brand Name</label>
+                    <input
+                      type="text"
+                      value={fields.brand || ''}
+                      onChange={(e) => setFields({ ...fields, brand: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Manufacturer Name</label>
+                    <input
+                      type="text"
+                      value={fields.manufacturer_details || ''}
+                      onChange={(e) => setFields({ ...fields, manufacturer_details: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Manufacturer Address</label>
+                    <input
+                      type="text"
+                      value={fields.address || ''}
+                      onChange={(e) => setFields({ ...fields, address: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Importer Name</label>
+                    <input
+                      type="text"
+                      value={fields.importer || ''}
+                      onChange={(e) => setFields({ ...fields, importer: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Country of Origin</label>
+                    <input
+                      type="text"
+                      value={fields.country_of_origin || ''}
+                      onChange={(e) => setFields({ ...fields, country_of_origin: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Consumer Care Details</label>
+                    <input
+                      type="text"
+                      value={fields.customer_care || ''}
+                      onChange={(e) => setFields({ ...fields, customer_care: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Maximum Retail Price (MRP)</label>
+                    <input
+                      type="text"
+                      value={fields.mrp || ''}
+                      onChange={(e) => setFields({ ...fields, mrp: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Net Quantity</label>
+                    <input
+                      type="text"
+                      value={fields.net_quantity || ''}
+                      onChange={(e) => setFields({ ...fields, net_quantity: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Manufacturing Date</label>
+                    <input
+                      type="text"
+                      value={fields.mfg_date || ''}
+                      onChange={(e) => setFields({ ...fields, mfg_date: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Best Before / Expiry</label>
+                    <input
+                      type="text"
+                      value={fields.expiry_date || ''}
+                      onChange={(e) => setFields({ ...fields, expiry_date: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Unit Sale Price</label>
+                    <input
+                      type="text"
+                      value={fields.unit_sale_price || ''}
+                      onChange={(e) => setFields({ ...fields, unit_sale_price: e.target.value })}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-850 text-slate-100 text-xs focus:outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleUpdateCompliance}
+                  disabled={isUpdating}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 disabled:opacity-50 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 hover:scale-[1.01] transition-all flex items-center justify-center gap-2"
+                >
+                  {isUpdating ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Saving Corrections & Recalculating Compliance...</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-4 h-4" />
+                      <span>Save Corrections & Recalculate Compliance</span>
+                    </>
+                  )}
+                </button>
               </div>
 
               {/* 7 Mandatory Legal Declarations Breakdown */}

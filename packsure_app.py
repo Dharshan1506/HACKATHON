@@ -550,7 +550,15 @@ async def scan(
     if product_name and product_name.strip():
         fields["commodity_name"] = product_name.strip()
 
-    eval_res = LegalMetrologyRulesEngine.validate(fields)
+    # Combine manufacturer details, address and importer for rule evaluation
+    eval_fields = fields.copy()
+    mfg_parts = []
+    if fields.get("manufacturer_details"): mfg_parts.append(fields["manufacturer_details"])
+    if fields.get("address"): mfg_parts.append(fields["address"])
+    if fields.get("importer"): mfg_parts.append(f"Importer: {fields['importer']}")
+    eval_fields["manufacturer_details"] = ", ".join(mfg_parts)
+
+    eval_res = LegalMetrologyRulesEngine.validate(eval_fields)
     
     p_name = fields.get("commodity_name") or product_name or "Packaged Product"
     p_brand = fields.get("brand") or "Brand"
@@ -565,7 +573,7 @@ async def scan(
         product_id=product.id,
         image_url=f"/uploads/{unique_fn}",
         image_filename=unique_fn,
-        extracted_data={"fields": fields, "raw_text": ocr_res["raw_text"], "rule_checks": eval_res["rule_checks"], "summary": summary},
+        extracted_data={"fields": fields, "raw_text": ocr_res["raw_text"], "bounding_boxes": ocr_res["bounding_boxes"], "rule_checks": eval_res["rule_checks"], "summary": summary},
         compliance_score=eval_res["score"],
         compliance_status=eval_res["status"],
         risk_level=eval_res["risk_level"]
@@ -601,6 +609,127 @@ async def scan(
         "violations_count": report.violations_count,
         "summary": summary,
         "details": scan_res.extracted_data
+    }
+
+@app.post("/api/scan/update")
+async def update_scan(
+    report_id: int = Form(...),
+    commodity_name: Optional[str] = Form(None),
+    brand: Optional[str] = Form(None),
+    manufacturer_details: Optional[str] = Form(None),
+    address: Optional[str] = Form(None),
+    mrp: Optional[str] = Form(None),
+    net_quantity: Optional[str] = Form(None),
+    mfg_date: Optional[str] = Form(None),
+    expiry_date: Optional[str] = Form(None),
+    importer: Optional[str] = Form(None),
+    country_of_origin: Optional[str] = Form(None),
+    customer_care: Optional[str] = Form(None),
+    unit_sale_price: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = select(Report).where(Report.id == report_id)
+    result = await db.execute(stmt)
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    stmt = select(ScanResult).where(ScanResult.id == report.scan_id)
+    result = await db.execute(stmt)
+    scan_result = result.scalar_one_or_none()
+    if not scan_result:
+        raise HTTPException(status_code=404, detail="Scan result not found")
+
+    fields = scan_result.extracted_data.get("fields", {})
+
+    if commodity_name is not None: fields["commodity_name"] = commodity_name
+    if brand is not None: fields["brand"] = brand
+    if manufacturer_details is not None: fields["manufacturer_details"] = manufacturer_details
+    if address is not None: fields["address"] = address
+    if mrp is not None: fields["mrp"] = mrp
+    if net_quantity is not None: fields["net_quantity"] = net_quantity
+    if mfg_date is not None: fields["mfg_date"] = mfg_date
+    if expiry_date is not None: fields["expiry_date"] = expiry_date
+    if importer is not None: fields["importer"] = importer
+    if country_of_origin is not None: fields["country_of_origin"] = country_of_origin
+    if customer_care is not None: fields["customer_care"] = customer_care
+    if unit_sale_price is not None: fields["unit_sale_price"] = unit_sale_price
+
+    # Combine manufacturer info for legal rules validation
+    eval_fields = fields.copy()
+    mfg_parts = []
+    if fields.get("manufacturer_details"): mfg_parts.append(fields["manufacturer_details"])
+    if fields.get("address"): mfg_parts.append(fields["address"])
+    if fields.get("importer"): mfg_parts.append(f"Importer: {fields['importer']}")
+    eval_fields["manufacturer_details"] = ", ".join(mfg_parts)
+
+    eval_res = LegalMetrologyRulesEngine.validate(eval_fields)
+
+    summary = f"Audit evaluated with score {eval_res['score']}% ({eval_res['status']}). Enforces Legal Metrology Rules 2011."
+
+    extracted_payload = {
+        "fields": fields,
+        "raw_text": scan_result.extracted_data.get("raw_text", ""),
+        "bounding_boxes": scan_result.extracted_data.get("bounding_boxes", []),
+        "rule_checks": eval_res["rule_checks"],
+        "summary": summary
+    }
+
+    scan_result.extracted_data = extracted_payload
+    scan_result.compliance_score = eval_res["score"]
+    scan_result.compliance_status = eval_res["status"]
+    scan_result.risk_level = eval_res["risk_level"]
+
+    report.summary = summary
+    report.violations_count = eval_res["violations_count"]
+    report.warnings_count = eval_res["warnings_count"]
+    report.passed_count = eval_res["passed_count"]
+    report.details = extracted_payload
+
+    stmt = select(Product).where(Product.id == scan_result.product_id)
+    result = await db.execute(stmt)
+    product = result.scalar_one_or_none()
+    if product:
+        p_name = fields.get("commodity_name") or "Product"
+        p_brand = fields.get("brand") or "Generic Brand"
+        product.name = f"{p_brand} - {p_name}"
+        product.brand = p_brand
+
+    await db.commit()
+
+    # Re-generate PDF
+    pdf_filename = f"Report_{report.report_code}.pdf"
+    pdf_path = os.path.join(UPLOAD_DIR, pdf_filename)
+    if os.path.exists(pdf_path):
+        try:
+            os.remove(pdf_path)
+        except Exception:
+            pass
+
+    ReportGenerator.generate_pdf(
+        report_code=report.report_code,
+        product_name=product.name if product else report.title,
+        score=scan_result.compliance_score,
+        status=scan_result.compliance_status,
+        risk=scan_result.risk_level,
+        summary=summary,
+        rule_checks=eval_res["rule_checks"],
+        output_path=pdf_path
+    )
+
+    return {
+        "id": report.id,
+        "scan_id": scan_result.id,
+        "report_code": report.report_code,
+        "product_name": product.name if product else report.title,
+        "compliance_score": scan_result.compliance_score,
+        "compliance_status": scan_result.compliance_status,
+        "risk_level": scan_result.risk_level,
+        "passed_count": report.passed_count,
+        "warnings_count": report.warnings_count,
+        "violations_count": report.violations_count,
+        "summary": summary,
+        "details": scan_result.extracted_data
     }
 
 @app.get("/api/reports")
@@ -835,6 +964,74 @@ async def index_ui():
               </div>
             </div>
 
+            <!-- Review & Correct Extracted Declarations Form -->
+            <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-4">
+              <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h4 class="text-sm font-bold text-white flex items-center gap-1.5">
+                  <i data-lucide="edit-3" class="w-4 h-4 text-cyan-400"></i>
+                  <span>Review & Correct Extracted Declarations</span>
+                </h4>
+                <span class="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">AI/NLP Structured Data</span>
+              </div>
+              
+              <input type="hidden" id="edit-report-id">
+              
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Product / Commodity Name</label>
+                  <input type="text" id="edit-commodity_name" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Brand Name</label>
+                  <input type="text" id="edit-brand" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Manufacturer Name</label>
+                  <input type="text" id="edit-manufacturer_details" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Manufacturer Address</label>
+                  <input type="text" id="edit-address" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Importer Name</label>
+                  <input type="text" id="edit-importer" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Country of Origin</label>
+                  <input type="text" id="edit-country_of_origin" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Customer Care Details</label>
+                  <input type="text" id="edit-customer_care" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Maximum Retail Price (MRP)</label>
+                  <input type="text" id="edit-mrp" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Net Quantity</label>
+                  <input type="text" id="edit-net_quantity" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Manufacturing Date</label>
+                  <input type="text" id="edit-mfg_date" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Best Before / Expiry</label>
+                  <input type="text" id="edit-expiry_date" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+                <div>
+                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Unit Sale Price</label>
+                  <input type="text" id="edit-unit_sale_price" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
+                </div>
+              </div>
+              
+              <button onclick="updateScanResults()" id="update-evaluate-btn" class="w-full py-3 mt-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 font-bold text-xs text-white shadow-lg shadow-emerald-500/20 hover:scale-[1.01] transition-all">
+                <i data-lucide="refresh-cw" class="w-3.5 h-3.5 inline-block mr-1"></i> Save Corrections & Recalculate Compliance
+              </button>
+            </div>
+
             <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-4">
               <h4 class="text-sm font-bold text-white">7 Mandatory Declarations Audit Breakdown</h4>
               <div id="rules-list" class="space-y-3"></div>
@@ -942,6 +1139,22 @@ async def index_ui():
         document.getElementById('res-counts').innerText = 'Passed: ' + data.passed_count + ' | Warnings: ' + data.warnings_count + ' | Failures: ' + data.violations_count;
         document.getElementById('res-pdf-link').href = '/api/reports/' + data.id + '/pdf';
 
+        // Populate Review & Corrections Form
+        const fields = data.details?.fields || {};
+        document.getElementById('edit-report-id').value = data.id;
+        document.getElementById('edit-commodity_name').value = fields.commodity_name || '';
+        document.getElementById('edit-brand').value = fields.brand || '';
+        document.getElementById('edit-manufacturer_details').value = fields.manufacturer_details || '';
+        document.getElementById('edit-address').value = fields.address || '';
+        document.getElementById('edit-importer').value = fields.importer || '';
+        document.getElementById('edit-country_of_origin').value = fields.country_of_origin || '';
+        document.getElementById('edit-customer_care').value = fields.customer_care || '';
+        document.getElementById('edit-mrp').value = fields.mrp || '';
+        document.getElementById('edit-net_quantity').value = fields.net_quantity || '';
+        document.getElementById('edit-mfg_date').value = fields.mfg_date || '';
+        document.getElementById('edit-expiry_date').value = fields.expiry_date || '';
+        document.getElementById('edit-unit_sale_price').value = fields.unit_sale_price || '';
+
         // Populate OCR details
         document.getElementById('raw-ocr-stream').innerText = data.details?.raw_text || 'No text detected.';
         const segmentsList = document.getElementById('ocr-segments-list');
@@ -991,6 +1204,69 @@ async def index_ui():
         alert('Scan failed: ' + err);
       } finally {
         btn.innerHTML = '<i data-lucide="shield-check" class="w-4 h-4 inline-block mr-1.5"></i> Start Compliance Check';
+        btn.disabled = false;
+        lucide.createIcons();
+      }
+    }
+
+    async function updateScanResults() {
+      const reportId = document.getElementById('edit-report-id').value;
+      if (!reportId) return;
+      
+      const btn = document.getElementById('update-evaluate-btn');
+      btn.innerText = 'Recalculating...';
+      btn.disabled = true;
+      
+      try {
+        const formData = new FormData();
+        formData.append('report_id', reportId);
+        
+        const fieldNames = [
+          'commodity_name', 'brand', 'manufacturer_details', 'address',
+          'importer', 'country_of_origin', 'customer_care', 'mrp',
+          'net_quantity', 'mfg_date', 'expiry_date', 'unit_sale_price'
+        ];
+        
+        fieldNames.forEach(name => {
+          const val = document.getElementById('edit-' + name).value;
+          formData.append(name, val);
+        });
+        
+        const res = await fetch('/api/scan/update', { method: 'POST', body: formData });
+        const data = await res.json();
+        
+        document.getElementById('res-name').innerText = data.product_name;
+        document.getElementById('res-score').innerText = data.compliance_score + '%';
+        
+        const stEl = document.getElementById('res-status');
+        stEl.className = 'badge-' + data.compliance_status.toLowerCase();
+        stEl.innerText = data.compliance_status;
+        
+        document.getElementById('res-summary').innerText = data.summary;
+        document.getElementById('res-counts').innerText = 'Passed: ' + data.passed_count + ' | Warnings: ' + data.warnings_count + ' | Failures: ' + data.violations_count;
+        
+        const list = document.getElementById('rules-list');
+        list.innerHTML = '';
+        (data.details?.rule_checks || []).forEach(r => {
+          const item = document.createElement('div');
+          item.className = 'p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-xs';
+          item.innerHTML = `
+            <div class="flex justify-between items-center">
+              <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
+              <span class="badge-${r.status.toLowerCase()}">${r.status}</span>
+            </div>
+            <div class="font-bold text-white">${r.title}</div>
+            <div class="text-[11px] font-mono text-slate-300 bg-slate-950 p-2 rounded">${r.value || 'Not Declared / Missing'}</div>
+            <div class="text-slate-400">${r.finding}</div>
+          `;
+          list.appendChild(item);
+        });
+        
+        alert('Compliance re-evaluated successfully!');
+      } catch (err) {
+        alert('Update failed: ' + err);
+      } finally {
+        btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5 inline-block mr-1"></i> Save Corrections & Recalculate Compliance';
         btn.disabled = false;
         lucide.createIcons();
       }

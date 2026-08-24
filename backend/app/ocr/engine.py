@@ -193,96 +193,141 @@ class OCREngine:
         fields: Dict[str, str] = {
             "commodity_name": "",
             "brand": "",
-            "net_quantity": "",
+            "manufacturer_details": "",
+            "address": "",
             "mrp": "",
-            "unit_sale_price": "",
+            "net_quantity": "",
             "mfg_date": "",
             "expiry_date": "",
-            "manufacturer_details": "",
-            "customer_care": "",
+            "importer": "",
             "country_of_origin": "",
-            "barcode": ""
+            "customer_care": "",
+            "unit_sale_price": ""
         }
 
-        # 1. Net Quantity (e.g. 500 g, 1 kg, 250 ml, 1 L, 10 N, 5 pcs)
-        qty_match = re.search(r'(\b\d+(\.\d+)?\s*(?:g|kg|ml|l|ltr|litre|litres|liter|liters|grams|kilograms|n|pcs|units|tablets|capsules)\b)', raw_text, re.IGNORECASE)
-        if qty_match:
-            fields["net_quantity"] = qty_match.group(1).strip()
-        else:
-            for line in lines:
-                if any(q in line.lower() for q in ["net qty", "net weight", "net quantity", "net wt", "net vol"]):
-                    fields["net_quantity"] = line
+        # Helper to find lines starting with or containing key prefixes
+        def find_after_prefix(keywords: List[str], text_str: str) -> str:
+            for line in text_str.split("\n"):
+                for kw in keywords:
+                    if kw.lower() in line.lower():
+                        idx = line.lower().find(kw.lower())
+                        extracted = line[idx + len(kw):].strip(" :.-=,")
+                        if extracted and len(extracted) > 1:
+                            return extracted
+            return ""
+
+        # Extract Brand
+        brand_keywords = ["brand name", "brand", "tm", "regd tm"]
+        fields["brand"] = find_after_prefix(brand_keywords, raw_text)
+        if not fields["brand"] and lines:
+            for l in lines[:3]:
+                if "brand" in l.lower():
+                    fields["brand"] = l.split(":")[-1].strip()
                     break
+            if not fields["brand"] and lines:
+                fields["brand"] = lines[0][:40]
 
-        # 2. Maximum Retail Price (MRP)
-        mrp_match = re.search(r'((?:mrp|m\.r\.p|max(?:imum)?\s*retail\s*price|price|₹|rs\.?)\s*[:.-]?\s*(?:rs\.?|₹)?\s*\d+(?:\.\d{2})?(?:\s*(?:\(?[^)\n]*incl[^)\n]*\)?))?)', raw_text, re.IGNORECASE)
-        if mrp_match and mrp_match.group(1).strip():
-            fields["mrp"] = mrp_match.group(1).strip()
-        else:
-            for line in lines:
-                if any(m in line.lower() for m in ["mrp", "m.r.p", "₹", "rs.", "price"]):
-                    fields["mrp"] = line
+        # Extract Commodity Name
+        commodity_keywords = ["commodity name", "commodity", "product name", "product"]
+        fields["commodity_name"] = find_after_prefix(commodity_keywords, raw_text)
+        if not fields["commodity_name"] and len(lines) > 1:
+            for l in lines[1:4]:
+                if not any(c.isdigit() for c in l) and len(l) > 5:
+                    fields["commodity_name"] = l[:60]
                     break
+            if not fields["commodity_name"]:
+                fields["commodity_name"] = lines[1][:60] if len(lines) > 1 else lines[0][:60]
 
-        # 3. Unit Sale Price (USP)
-        usp_match = re.search(r'((?:usp|unit\s*sale\s*price|unit\s*price|₹\s*\/?\s*g|₹\s*\/?\s*ml|₹\s*\/?\s*kg|rs\.?\s*\/?\s*g)\s*[:.-]?\s*(?:rs\.?|₹)?\s*\d+(?:\.\d{2})?\s*(?:per|\/)\s*(?:g|kg|ml|l|unit|piece|n))', raw_text, re.IGNORECASE)
-        if usp_match:
-            fields["unit_sale_price"] = usp_match.group(1).strip()
-        else:
-            for line in lines:
-                if "usp" in line.lower() or ("per" in line.lower() and any(u in line.lower() for u in ["/g", "/kg", "/ml", "/l", "per g", "per ml"])):
-                    fields["unit_sale_price"] = line
-                    break
-
-        # 4. Mfg / Packing Date (MM/YYYY or DD/MM/YYYY or Month Year)
-        mfg_match = re.search(r'((?:mfg|mfd|packed|pkd|manufacture[d]?|date\s*of\s*mfg|date\s*of\s*packing)\s*[:.-]?\s*(?:[0-3]?[0-9][\/\-.])?[0-1]?[0-9][\/\-.][1-2][0-9]{3}|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,.-]+[1-2][0-9]{3})', raw_text, re.IGNORECASE)
-        if mfg_match:
-            fields["mfg_date"] = mfg_match.group(1).strip()
-        else:
-            for line in lines:
-                if any(k in line.lower() for k in ["mfg", "mfd", "pkd", "packed", "date"]):
-                    fields["mfg_date"] = line
-                    break
-
-        # 5. Expiry Date / Best Before
-        exp_match = re.search(r'((?:exp|expiry|use\s*before|best\s*before)\s*[:.-]?\s*(?:[0-3]?[0-9][\/\-.])?[0-1]?[0-9][\/\-.][1-2][0-9]{3}|\d+\s*months?)', raw_text, re.IGNORECASE)
-        if exp_match:
-            fields["expiry_date"] = exp_match.group(1).strip()
-
-        # 6. Manufacturer Details
-        for i, line in enumerate(lines):
-            if any(k in line.lower() for k in ["mfd by", "manufactured by", "packed by", "marketed by", "imported by", "mfg by", "manufactured & packed by"]):
-                combined_mfg = line
-                if i + 1 < len(lines) and len(lines[i + 1]) > 5:
-                    combined_mfg += f", {lines[i + 1]}"
-                fields["manufacturer_details"] = combined_mfg
-                break
+        # Extract Manufacturer
+        mfg_keywords = ["manufactured by", "mfd by", "packed by", "mfd & packed by", "manufactured & packed by", "packed and manufactured by"]
+        fields["manufacturer_details"] = find_after_prefix(mfg_keywords, raw_text)
         if not fields["manufacturer_details"]:
-            for line in lines:
-                if any(w in line.lower() for w in ["pvt ltd", "private limited", "ltd.", "industries", "industrial area", "estate", "plot no"]):
-                    fields["manufacturer_details"] = line
+            for l in lines:
+                if any(k in l.lower() for k in ["mfd by", "manufactured by", "packed by", "mfg by"]):
+                    fields["manufacturer_details"] = l.split(":")[-1].strip()
+                    break
+            if not fields["manufacturer_details"]:
+                for l in lines:
+                    if any(k in l.lower() for k in ["pvt ltd", "private limited", "ltd", "corp", "inc"]):
+                        fields["manufacturer_details"] = l
+                        break
+
+        # Extract Address
+        address_parts = []
+        for l in lines:
+            l_lower = l.lower()
+            if any(k in l_lower for k in ["plot no", "industrial estate", "industrial area", "road", "street", "lane", "phase", "sector", "building", "floor", "nagar", "ward", "pin code", "pincode"]):
+                address_parts.append(l)
+            elif re.search(r'\b\d{6}\b', l):
+                address_parts.append(l)
+        if address_parts:
+            seen = set()
+            unique_parts = []
+            for part in address_parts:
+                part_clean = part.strip(" ,.-")
+                if part_clean not in seen:
+                    seen.add(part_clean)
+                    unique_parts.append(part_clean)
+            fields["address"] = ", ".join(unique_parts)
+
+        # Extract Importer
+        importer_keywords = ["imported by", "importer", "imported & marketed by", "import details"]
+        fields["importer"] = find_after_prefix(importer_keywords, raw_text)
+        if not fields["importer"]:
+            for l in lines:
+                if "imported" in l.lower() or "importer" in l.lower():
+                    fields["importer"] = l.split(":")[-1].strip()
                     break
 
-        # 7. Customer Care / Consumer Helpline
-        for line in lines:
-            if any(c in line.lower() for c in ["consumer care", "customer care", "helpline", "toll free", "complaints", "feedback", "email:", "care@"]):
-                fields["customer_care"] = line
-                break
-
-        # 8. Country of Origin
-        for line in lines:
-            if any(o in line.lower() for o in ["country of origin", "made in", "origin:"]):
-                fields["country_of_origin"] = line
-                break
+        # Extract Country of Origin
+        origin_keywords = ["country of origin", "made in", "origin", "product of"]
+        fields["country_of_origin"] = find_after_prefix(origin_keywords, raw_text)
+        if not fields["country_of_origin"]:
+            for l in lines:
+                if "origin" in l.lower() or "made in" in l.lower():
+                    fields["country_of_origin"] = l.split(":")[-1].strip()
+                    break
         if not fields["country_of_origin"] and "india" in full_text_lower:
             fields["country_of_origin"] = "India"
 
-        # 9. Generic Commodity Name & Brand
-        if lines:
-            fields["brand"] = lines[0][:40]
-            fields["commodity_name"] = lines[1][:60] if len(lines) > 1 else lines[0][:60]
+        # Extract Customer Care
+        cc_keywords = ["customer care", "consumer care", "care cell", "complaints", "feedback", "helpline", "toll free", "toll-free"]
+        fields["customer_care"] = find_after_prefix(cc_keywords, raw_text)
+        if not fields["customer_care"]:
+            for l in lines:
+                if any(k in l.lower() for k in ["care", "customer", "helpline", "email", "@", "complaint"]):
+                    fields["customer_care"] = l
+                    break
 
-        # 10. Map Bounding Boxes for Visual Inspection
+        # Extract MRP
+        mrp_match = re.search(r'((?:mrp|m\.r\.p|price|₹|rs\.?)\s*[:.-]?\s*(?:rs\.?|₹)?\s*\d+(?:\.\d{2})?(?:\s*(?:\(?[^)\n]*incl[^)\n]*\)?))?)', raw_text, re.I)
+        if mrp_match and mrp_match.group(1).strip():
+            fields["mrp"] = mrp_match.group(1).strip()
+
+        # Extract Net Quantity
+        qty_match = re.search(r'(\b\d+(\.\d+)?\s*(?:g|kg|ml|l|ltr|grams|n|pcs|units)\b)', raw_text, re.I)
+        if qty_match:
+            fields["net_quantity"] = qty_match.group(1).strip()
+
+        # Extract Mfg Date
+        mfg_match = re.search(r'((?:mfg|mfd|packed|pkd)\s*[:.-]?\s*(?:[0-3]?[0-9][\/\-.])?[0-1]?[0-9][\/\-.][1-2][0-9]{3}|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s,.-]+[1-2][0-9]{3})', raw_text, re.I)
+        if mfg_match:
+            fields["mfg_date"] = mfg_match.group(1).strip()
+
+        # Extract Expiry Date
+        exp_keywords = ["best before", "expiry date", "exp date", "expiry", "exp", "use by"]
+        fields["expiry_date"] = find_after_prefix(exp_keywords, raw_text)
+        if not fields["expiry_date"]:
+            exp_match = re.search(r'((?:exp|expiry|use\s*before|best\s*before)\s*[:.-]?\s*(?:[0-3]?[0-9][\/\-.])?[0-1]?[0-9][\/\-.][1-2][0-9]{3}|\d+\s*months?)', raw_text, re.I)
+            if exp_match:
+                fields["expiry_date"] = exp_match.group(1).strip()
+
+        # Extract Unit Sale Price
+        usp_match = re.search(r'((?:usp|unit\s*price|₹\s*\/?\s*g|rs\.?\s*\/?\s*g)\s*[:.-]?\s*(?:rs\.?|₹)?\s*\d+(?:\.\d{2})?\s*(?:per|\/)\s*(?:g|kg|ml|l|unit|piece|n))', raw_text, re.I)
+        if usp_match:
+            fields["unit_sale_price"] = usp_match.group(1).strip()
+
+        # Map Bounding Boxes for Visual Inspection
         mapped_boxes = []
         for db in detected_boxes[:15]:
             mapped_boxes.append({

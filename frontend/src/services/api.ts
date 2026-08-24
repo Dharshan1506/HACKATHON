@@ -64,3 +64,12 @@ export const fetchReportDetail = async (id: number): Promise<ComplianceReport> =
 export const getPdfDownloadUrl = (reportId: number): string => {
   return `${API_BASE}/reports/${reportId}/pdf`;
 };
+
+export const updateScanResult = async (formData: FormData): Promise<ComplianceReport> => {
+  const response = await api.post('/scan/update', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};

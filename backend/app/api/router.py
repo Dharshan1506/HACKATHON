@@ -71,7 +71,14 @@ async def scan_product(
         fields["brand"] = clean_brand
 
     # 2. Run AI Compliance Evaluation
-    compliance_analysis = ComplianceAIAnalyzer.analyze(fields)
+    eval_fields = fields.copy()
+    mfg_parts = []
+    if fields.get("manufacturer_details"): mfg_parts.append(fields["manufacturer_details"])
+    if fields.get("address"): mfg_parts.append(fields["address"])
+    if fields.get("importer"): mfg_parts.append(f"Importer: {fields['importer']}")
+    eval_fields["manufacturer_details"] = ", ".join(mfg_parts)
+
+    compliance_analysis = ComplianceAIAnalyzer.analyze(eval_fields)
 
     extracted_payload = {
         "fields": fields,
@@ -165,6 +172,128 @@ async def run_dedicated_ocr(file: UploadFile = File(...)):
                 pass
 
     return ocr_result
+
+@router.post("/scan/update")
+async def update_scan(
+    report_id: int = Form(...),
+    commodity_name: Optional[str] = Form(None),
+    brand: Optional[str] = Form(None),
+    manufacturer_details: Optional[str] = Form(None),
+    address: Optional[str] = Form(None),
+    mrp: Optional[str] = Form(None),
+    net_quantity: Optional[str] = Form(None),
+    mfg_date: Optional[str] = Form(None),
+    expiry_date: Optional[str] = Form(None),
+    importer: Optional[str] = Form(None),
+    country_of_origin: Optional[str] = Form(None),
+    customer_care: Optional[str] = Form(None),
+    unit_sale_price: Optional[str] = Form(None),
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = select(Report).where(Report.id == report_id)
+    result = await db.execute(stmt)
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    stmt = select(ScanResult).where(ScanResult.id == report.scan_id)
+    result = await db.execute(stmt)
+    scan_result = result.scalar_one_or_none()
+    if not scan_result:
+        raise HTTPException(status_code=404, detail="Scan result not found")
+
+    fields = scan_result.extracted_data.get("fields", {})
+
+    if commodity_name is not None: fields["commodity_name"] = commodity_name
+    if brand is not None: fields["brand"] = brand
+    if manufacturer_details is not None: fields["manufacturer_details"] = manufacturer_details
+    if address is not None: fields["address"] = address
+    if mrp is not None: fields["mrp"] = mrp
+    if net_quantity is not None: fields["net_quantity"] = net_quantity
+    if mfg_date is not None: fields["mfg_date"] = mfg_date
+    if expiry_date is not None: fields["expiry_date"] = expiry_date
+    if importer is not None: fields["importer"] = importer
+    if country_of_origin is not None: fields["country_of_origin"] = country_of_origin
+    if customer_care is not None: fields["customer_care"] = customer_care
+    if unit_sale_price is not None: fields["unit_sale_price"] = unit_sale_price
+
+    # Combine manufacturer info for legal rules validation
+    eval_fields = fields.copy()
+    mfg_parts = []
+    if fields.get("manufacturer_details"): mfg_parts.append(fields["manufacturer_details"])
+    if fields.get("address"): mfg_parts.append(fields["address"])
+    if fields.get("importer"): mfg_parts.append(f"Importer: {fields['importer']}")
+    eval_fields["manufacturer_details"] = ", ".join(mfg_parts)
+
+    compliance_analysis = ComplianceAIAnalyzer.analyze(eval_fields)
+
+    extracted_payload = {
+        "fields": fields,
+        "raw_text": scan_result.extracted_data.get("raw_text", ""),
+        "bounding_boxes": scan_result.extracted_data.get("bounding_boxes", []),
+        "rule_checks": compliance_analysis["rule_checks"],
+        "summary": compliance_analysis["summary"],
+        "action_items": compliance_analysis["action_items"]
+    }
+
+    scan_result.extracted_data = extracted_payload
+    scan_result.compliance_score = compliance_analysis["score"]
+    scan_result.compliance_status = compliance_analysis["status"]
+    scan_result.risk_level = compliance_analysis["risk_level"]
+
+    report.summary = compliance_analysis["summary"]
+    report.violations_count = compliance_analysis["violations_count"]
+    report.warnings_count = compliance_analysis["warnings_count"]
+    report.passed_count = compliance_analysis["passed_count"]
+    report.details = extracted_payload
+
+    stmt = select(Product).where(Product.id == scan_result.product_id)
+    result = await db.execute(stmt)
+    product = result.scalar_one_or_none()
+    if product:
+        p_name = fields.get("commodity_name") or "Product"
+        p_brand = fields.get("brand") or "Generic Brand"
+        product.name = f"{p_brand} - {p_name}"
+        product.brand = p_brand
+
+    await db.commit()
+
+    # Re-generate PDF
+    pdf_filename = f"Report_{report.report_code}.pdf"
+    pdf_path = os.path.join(settings.UPLOAD_DIR, pdf_filename)
+    if os.path.exists(pdf_path):
+        try:
+            os.remove(pdf_path)
+        except Exception:
+            pass
+
+    ReportGenerator.generate_pdf_report(
+        report_code=report.report_code,
+        product_name=product.name if product else report.title,
+        scan_data={
+            "compliance_score": scan_result.compliance_score,
+            "compliance_status": scan_result.compliance_status,
+            "risk_level": scan_result.risk_level,
+            "extracted_data": extracted_payload
+        },
+        output_path=pdf_path
+    )
+
+    return {
+        "id": report.id,
+        "scan_id": scan_result.id,
+        "report_id": report.id,
+        "report_code": report.report_code,
+        "product_name": product.name if product else report.title,
+        "compliance_score": scan_result.compliance_score,
+        "compliance_status": scan_result.compliance_status,
+        "risk_level": scan_result.risk_level,
+        "passed_count": report.passed_count,
+        "warnings_count": report.warnings_count,
+        "violations_count": report.violations_count,
+        "summary": compliance_analysis["summary"],
+        "details": extracted_payload
+    }
 
 @router.post("/upload")
 async def upload_product_package(
