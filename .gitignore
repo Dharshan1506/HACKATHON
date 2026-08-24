@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+.venv/
+env/
+venv/
+
+# Build & Dist
+dist/
+frontend/dist/
+build/
+
+# Database & Uploads
+*.db
+*.sqlite3
+backend/packsure.db
+backend/uploads/*.jpg
+backend/uploads/*.png
+backend/uploads/*.pdf
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE & System
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
