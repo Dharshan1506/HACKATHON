@@ -2250,19 +2250,24 @@ async def index_ui():
         }
         data.reports.forEach(r => {
           const el = document.createElement('div');
+          const stSlug = (r.compliance_status || 'compliant').toLowerCase().replace(/\s+/g, '-');
           el.className = 'glass-card p-5 rounded-2xl border border-slate-800 space-y-3';
           el.innerHTML = `
             <div class="flex justify-between items-start">
               <div>
-                <span class="text-xs font-mono text-cyan-400 font-bold">${r.report_code}</span>
-                <h4 class="font-bold text-white text-base mt-0.5">${r.product_name}</h4>
+                <span class="text-xs font-mono text-cyan-400 font-bold px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20">${r.report_code}</span>
+                <h4 class="font-bold text-white text-base mt-1.5">${r.product_name}</h4>
+                <span class="text-[11px] text-slate-400 font-medium">${r.category || 'General'}</span>
               </div>
-              <span class="badge-${r.compliance_status.toLowerCase()}">${r.compliance_status} (${r.compliance_score}%)</span>
+              <span class="badge-${stSlug}">${r.compliance_status} (${r.compliance_score}%)</span>
             </div>
-            <p class="text-xs text-slate-400 line-clamp-2">${r.summary}</p>
+            <p class="text-xs text-slate-300 line-clamp-2 bg-slate-950/60 p-2.5 rounded-xl border border-slate-850">${r.summary}</p>
             <div class="flex justify-between items-center pt-2 border-t border-slate-800 text-xs">
               <span class="text-slate-500">${new Date(r.created_at).toLocaleDateString()}</span>
-              <a href="/api/reports/${r.id}/pdf" target="_blank" class="text-emerald-400 hover:underline font-bold">Download PDF →</a>
+              <a href="/api/reports/${r.id}/pdf" target="_blank" class="text-emerald-400 hover:text-emerald-300 hover:underline font-bold flex items-center gap-1">
+                <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                <span>Download Report (PDF) →</span>
+              </a>
             </div>
           `;
           grid.appendChild(el);
