@@ -353,7 +353,7 @@ export const ScanProduct: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4">
+                  <div className="flex flex-wrap items-center gap-3">
                     <div className="text-right">
                       <div className="text-3xl font-black text-white">{report.compliance_score}%</div>
                       <div className="text-[11px] text-slate-400 font-semibold">Deterministic Score</div>
@@ -369,6 +369,17 @@ export const ScanProduct: React.FC = () => {
                     }`}>
                       {report.compliance_score >= 90 ? 'COMPLIANT' : report.compliance_score >= 70 ? 'MOSTLY COMPLIANT' : report.compliance_score >= 40 ? 'NEEDS REVIEW' : 'HIGH RISK'}
                     </span>
+                    <a
+                      href={getPdfDownloadUrl(report.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      id="header-download-report-btn"
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-500/25 transition-all active:scale-[0.98]"
+                      title="Download Official Legal Metrology Audit PDF Report"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Download Report</span>
+                    </a>
                   </div>
                 </div>
 
@@ -509,7 +520,7 @@ export const ScanProduct: React.FC = () => {
                     className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all"
                   >
                     <Download className="w-4 h-4" />
-                    <span>Download Official PDF Certificate</span>
+                    <span>Download Report (PDF)</span>
                   </a>
                 </div>
 

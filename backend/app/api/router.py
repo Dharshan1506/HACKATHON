@@ -404,6 +404,13 @@ async def download_report_pdf(report_id: int, db: AsyncSession = Depends(get_db)
     pdf_filename = f"Report_{rep_data['report_code']}.pdf"
     pdf_path = os.path.join(settings.UPLOAD_DIR, pdf_filename)
     
+    img_path = None
+    if rep_data.get("image_url"):
+        img_filename = os.path.basename(rep_data["image_url"])
+        candidate_path = os.path.join(settings.UPLOAD_DIR, img_filename)
+        if os.path.exists(candidate_path):
+            img_path = candidate_path
+
     ReportGenerator.generate_pdf_report(
         report_code=rep_data['report_code'],
         product_name=rep_data['product_name'],
@@ -413,7 +420,8 @@ async def download_report_pdf(report_id: int, db: AsyncSession = Depends(get_db)
             "risk_level": rep_data['risk_level'],
             "extracted_data": rep_data['details']
         },
-        output_path=pdf_path
+        output_path=pdf_path,
+        image_path=img_path
     )
 
     return FileResponse(

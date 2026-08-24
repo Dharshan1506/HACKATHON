@@ -269,7 +269,7 @@ export const ViewReports: React.FC<ViewReportsProps> = ({ initialSelectedId }) =
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all"
               >
                 <Download className="w-4 h-4" />
-                <span>Download Official PDF Certificate</span>
+                <span>Download Report (PDF)</span>
               </a>
 
               <button
