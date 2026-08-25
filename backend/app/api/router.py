@@ -104,9 +104,16 @@ async def scan_product(
     # 3. Save Product
     p_name = fields.get("commodity_name") or clean_p_name or "Packaged Product"
     p_brand = fields.get("brand") or clean_brand or "Generic Brand"
+    if p_brand and p_name:
+        if p_name.lower().startswith(p_brand.lower()):
+            prod_name = p_name
+        else:
+            prod_name = f"{p_brand} {p_name}"
+    else:
+        prod_name = p_name or p_brand or "Product"
     
     product = Product(
-        name=f"{p_brand} - {p_name}" if p_brand and p_name else (p_name or "Product"),
+        name=prod_name,
         category=final_category,
         brand=p_brand
     )
@@ -270,7 +277,13 @@ async def update_scan(
     if product:
         p_name = fields.get("commodity_name") or "Product"
         p_brand = fields.get("brand") or "Generic Brand"
-        product.name = f"{p_brand} - {p_name}"
+        if p_brand and p_name:
+            if p_name.lower().startswith(p_brand.lower()):
+                product.name = p_name
+            else:
+                product.name = f"{p_brand} {p_name}"
+        else:
+            product.name = p_name or p_brand or "Product"
         product.brand = p_brand
         product.category = updated_cat
 

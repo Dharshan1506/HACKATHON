@@ -1,3 +1,10 @@
+# Environment & Secrets
+.env
+.env.*
+*.env
+credentials.json
+secrets.json
+
 # Dependencies
 node_modules/
 frontend/node_modules/
@@ -10,20 +17,34 @@ dist/
 frontend/dist/
 build/
 
-# Database & Uploads
+# Database & Storage
 *.db
 *.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
 backend/packsure.db
-backend/uploads/*.jpg
-backend/uploads/*.png
-backend/uploads/*.pdf
+packsure.db
 
-# Python Cache
+# Uploads & Generated Media
+backend/uploads/*.jpg
+backend/uploads/*.jpeg
+backend/uploads/*.png
+backend/uploads/*.webp
+backend/uploads/*.pdf
+uploads/
+
+# Python Cache & Logs
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
+*.log
+.pytest_cache/
 
-# IDE & System
+# IDE & OS
 .DS_Store
 Thumbs.db
 .idea/
+.vscode/
+.agents/

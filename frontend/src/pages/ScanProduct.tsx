@@ -35,21 +35,63 @@ export const ScanProduct: React.FC = () => {
     unit_sale_price: ''
   });
   
+  const [stepperStage, setStepperStage] = useState<number>(1);
+  const [stepperPercent, setStepperPercent] = useState<number>(0);
+  const [stepperSubtext, setStepperSubtext] = useState<string>('Preparing...');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const compressImage = async (file: File): Promise<File> => {
+    if (!file || !file.type.startsWith('image/')) return file;
+    if (file.size <= 1.5 * 1024 * 1024) return file;
+
+    return new Promise((resolve) => {
+      const img = new Image();
+      const url = URL.createObjectURL(file);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        let { width, height } = img;
+        const maxDimension = 1600;
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round((height * maxDimension) / width);
+            width = maxDimension;
+          } else {
+            width = Math.round((width * maxDimension) / height);
+            height = maxDimension;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          if (blob && blob.size < file.size) {
+            resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
+          } else {
+            resolve(file);
+          }
+        }, 'image/jpeg', 0.88);
+      };
+      img.onerror = () => resolve(file);
+      img.src = url;
+    });
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
+      const rawFile = e.target.files[0];
       const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
       
-      if (!validTypes.includes(file.type) && !file.name.match(/\.(jpg|jpeg|png|webp)$/i)) {
+      if (!validTypes.includes(rawFile.type) && !rawFile.name.match(/\.(jpg|jpeg|png|webp)$/i)) {
         setErrorMsg('Please upload a valid image file (JPG, JPEG, PNG, or WEBP).');
         return;
       }
 
       setErrorMsg(null);
-      setSelectedFile(file);
-      setPreviewUrl(URL.createObjectURL(file));
+      const optimized = await compressImage(rawFile);
+      setSelectedFile(optimized);
+      setPreviewUrl(URL.createObjectURL(optimized));
       setReport(null);
     }
   };
@@ -72,6 +114,14 @@ export const ScanProduct: React.FC = () => {
 
     setIsScanning(true);
     setErrorMsg(null);
+    setStepperStage(1);
+    setStepperPercent(15);
+    setStepperSubtext('1/5: Uploading & optimizing image...');
+
+    const t1 = setTimeout(() => { setStepperStage(2); setStepperPercent(40); setStepperSubtext('2/5: Deep learning OCR text extraction...'); }, 350);
+    const t2 = setTimeout(() => { setStepperStage(3); setStepperPercent(65); setStepperSubtext('3/5: Detecting brand, commodity & declarations...'); }, 900);
+    const t3 = setTimeout(() => { setStepperStage(4); setStepperPercent(85); setStepperSubtext('4/5: Evaluating Legal Metrology Act rules...'); }, 1500);
+    const t4 = setTimeout(() => { setStepperStage(5); setStepperPercent(95); setStepperSubtext('5/5: Synthesizing compliance report & verdict...'); }, 2100);
 
     try {
       const formData = new FormData();
@@ -82,31 +132,39 @@ export const ScanProduct: React.FC = () => {
       formData.append('category', category);
 
       const res = await scanProductImage(formData);
-      setReport(res);
       
-      const detectedCat = res.category || (res as any).detected_category || 'Food';
-      setCategory(detectedCat);
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
+      setStepperStage(6);
+      setStepperPercent(100);
+      setStepperSubtext('Compliance scan successfully completed!');
 
-      const extractedFields = res.details?.fields || {};
-      setFields({
-        commodity_name: extractedFields.commodity_name || '',
-        brand: extractedFields.brand || '',
-        category: detectedCat,
-        manufacturer_details: extractedFields.manufacturer_details || '',
-        address: extractedFields.address || '',
-        importer: extractedFields.importer || '',
-        country_of_origin: extractedFields.country_of_origin || '',
-        customer_care: extractedFields.customer_care || '',
-        mrp: extractedFields.mrp || '',
-        net_quantity: extractedFields.net_quantity || '',
-        mfg_date: extractedFields.mfg_date || '',
-        expiry_date: extractedFields.expiry_date || '',
-        unit_sale_price: extractedFields.unit_sale_price || ''
-      });
+      setTimeout(() => {
+        setReport(res);
+        const detectedCat = res.category || (res as any).detected_category || 'Food';
+        setCategory(detectedCat);
+
+        const extractedFields = res.details?.fields || {};
+        setFields({
+          commodity_name: extractedFields.commodity_name || '',
+          brand: extractedFields.brand || '',
+          category: detectedCat,
+          manufacturer_details: extractedFields.manufacturer_details || '',
+          address: extractedFields.address || '',
+          importer: extractedFields.importer || '',
+          country_of_origin: extractedFields.country_of_origin || '',
+          customer_care: extractedFields.customer_care || '',
+          mrp: extractedFields.mrp || '',
+          net_quantity: extractedFields.net_quantity || '',
+          mfg_date: extractedFields.mfg_date || '',
+          expiry_date: extractedFields.expiry_date || '',
+          unit_sale_price: extractedFields.unit_sale_price || ''
+        });
+        setIsScanning(false);
+      }, 300);
     } catch (err: any) {
+      clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4);
       console.error("Compliance Check error:", err);
       setErrorMsg(err.response?.data?.detail || 'Failed to connect to backend server. Please verify FastAPI is running.');
-    } finally {
       setIsScanning(false);
     }
   };
@@ -861,6 +919,71 @@ export const ScanProduct: React.FC = () => {
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+          ) : isScanning ? (
+            <div className="glass-card p-8 rounded-3xl border border-cyan-500/40 bg-slate-900/90 shadow-2xl space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center animate-pulse border border-cyan-500/30">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-white">AI Compliance Engine Active</h3>
+                    <p className="text-xs text-cyan-400 font-medium">{stepperSubtext}</p>
+                  </div>
+                </div>
+                <span className="text-xl font-black font-mono text-cyan-400">{stepperPercent}%</span>
+              </div>
+
+              {/* Glowing Progress Bar */}
+              <div className="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800 p-0.5">
+                <div 
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-500 transition-all duration-300"
+                  style={{ width: `${stepperPercent}%` }}
+                />
+              </div>
+
+              {/* 5 Distinct Stages */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-2">
+                {[
+                  { step: 1, title: 'Uploading' },
+                  { step: 2, title: 'OCR' },
+                  { step: 3, title: 'Detecting' },
+                  { step: 4, title: 'Checking' },
+                  { step: 5, title: 'Report' }
+                ].map(({ step, title }) => {
+                  const isDone = stepperStage > step;
+                  const isActive = stepperStage === step;
+                  return (
+                    <div 
+                      key={step}
+                      className={`p-3 rounded-2xl border text-center space-y-1.5 transition-all ${
+                        isDone 
+                          ? 'bg-emerald-500/10 border-emerald-500/30' 
+                          : isActive 
+                            ? 'bg-cyan-500/10 border-cyan-500/50 shadow-lg shadow-cyan-500/10' 
+                            : 'bg-slate-950 border-slate-800'
+                      }`}
+                    >
+                      <div className={`w-7 h-7 rounded-lg mx-auto flex items-center justify-center text-xs font-bold ${
+                        isDone
+                          ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/20'
+                          : isActive
+                            ? 'bg-cyan-500 text-slate-950 animate-pulse'
+                            : 'bg-slate-800 text-slate-400'
+                      }`}>
+                        {isDone ? '✓' : step}
+                      </div>
+                      <div className="text-[11px] font-bold text-slate-300">{title}</div>
+                      <div className={`text-[9px] font-semibold ${
+                        isDone ? 'text-emerald-400' : isActive ? 'text-cyan-400' : 'text-slate-500'
+                      }`}>
+                        {isDone ? 'Completed' : isActive ? 'Active' : 'Pending'}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           ) : (
