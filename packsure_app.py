@@ -86,6 +86,22 @@ class ScanResult(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     product = relationship("Product", back_populates="scans")
     reports = relationship("Report", back_populates="scan", cascade="all, delete-orphan")
+    images = relationship("ScanImage", back_populates="scan", cascade="all, delete-orphan")
+
+class ScanImage(Base):
+    __tablename__ = "scan_images"
+    id = Column(Integer, primary_key=True, index=True)
+    scan_id = Column(Integer, ForeignKey("scan_results.id"), nullable=False)
+    image_index = Column(Integer, nullable=False, default=0)
+    image_name = Column(String(255), nullable=False)
+    image_url = Column(String(500), nullable=False)
+    image_filename = Column(String(255), nullable=False)
+    surface_label = Column(String(50), nullable=True)
+    ocr_text = Column(Text, nullable=True)
+    confidence = Column(Float, nullable=True)
+    bounding_boxes = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    scan = relationship("ScanResult", back_populates="images")
 
 class Report(Base):
     __tablename__ = "reports"
@@ -479,10 +495,15 @@ def get_reader():
 
 class OCREngine:
     @classmethod
-    async def process_images(cls, image_paths: List[str]) -> Dict[str, Any]:
+    async def process_images(cls, image_paths: List[str], image_filenames: Optional[List[str]] = None) -> Dict[str, Any]:
         all_raw_texts = []
         all_detected_boxes = []
+        per_image_results = []
         first_width, first_height = 800, 600
+        view_labels = ["Front", "Back", "Side", "Bottom"]
+
+        total_images = len(image_paths)
+        print(f"Received: {total_images} images")
 
         for idx, img_path in enumerate(image_paths):
             if not os.path.exists(img_path):
@@ -496,17 +517,38 @@ class OCREngine:
             except Exception:
                 pass
 
+            surface_label = view_labels[idx] if idx < len(view_labels) else f"View {idx + 1}"
             raw_t, boxes = await asyncio.to_thread(cls._extract_real_text_and_boxes, img_path, w, h)
+            
+            conf_values = [b.get("confidence", 0.85) for b in boxes if isinstance(b, dict) and "confidence" in b]
+            avg_conf = round(float(np.mean(conf_values)), 3) if conf_values else (0.92 if raw_t else 0.0)
+
+            img_fn = image_filenames[idx] if image_filenames and idx < len(image_filenames) else os.path.basename(img_path)
+
+            per_image_results.append({
+                "image_index": idx,
+                "image_name": img_fn,
+                "surface_label": surface_label,
+                "image_path": img_path,
+                "ocr_text": raw_t,
+                "confidence": avg_conf,
+                "bounding_boxes": boxes,
+                "dimensions": {"width": w, "height": h}
+            })
+
+            print(f"OCR processed: {idx + 1}/{total_images} ({surface_label})")
+
             if raw_t:
-                view_labels = ["Front", "Back", "Side", "Bottom"]
-                label_name = view_labels[idx] if idx < len(view_labels) else f"View {idx + 1}"
-                all_raw_texts.append(f"[{label_name} Packaging Surface]\n{raw_t}")
+                all_raw_texts.append(f"[Image {idx + 1}: {surface_label} Packaging Surface]\n{raw_t}")
             for b in boxes:
                 b_copy = dict(b)
                 b_copy["image_index"] = idx
+                b_copy["surface_label"] = surface_label
                 all_detected_boxes.append(b_copy)
 
         combined_raw_text = "\n\n".join(all_raw_texts) if all_raw_texts else "No text detected."
+        print(f"Combined OCR: successful ({len(all_raw_texts)} views)")
+
         fields, fields_confidence = cls._parse_fields(combined_raw_text, [b["text"] for b in all_detected_boxes])
         detected_category = cls.detect_category(combined_raw_text, fields)
 
@@ -517,11 +559,13 @@ class OCREngine:
             "detected_category": detected_category,
             "image_dimensions": {"width": first_width, "height": first_height}, 
             "bounding_boxes": all_detected_boxes,
-            "processed_images_count": len(image_paths)
+            "per_image_results": per_image_results,
+            "processed_images_count": len(per_image_results)
         }
 
     @classmethod
     async def process_image(cls, image_path: str) -> Dict[str, Any]:
+        return await cls.process_images([image_path])
         return await cls.process_images([image_path])
 
     @classmethod
@@ -1066,7 +1110,8 @@ class ReportGenerator:
         rule_checks: list,
         output_path: str,
         image_path: Optional[str] = None,
-        extracted_data: Optional[dict] = None
+        extracted_data: Optional[dict] = None,
+        image_paths: Optional[List[str]] = None
     ) -> str:
         """
         Generates an official, comprehensive PDF Legal Metrology Audit Certificate and Regulatory Report.
@@ -1129,20 +1174,20 @@ class ReportGenerator:
             fontName='Helvetica',
             fontSize=7.5,
             leading=10,
-            textColor=colors.HexColor("#475569")
+            textColor=colors.HexColor("#334155")
         )
         disclaimer_style = ParagraphStyle(
             'Disclaimer',
             parent=styles['Normal'],
-            fontName='Helvetica-Oblique',
-            fontSize=7,
-            leading=9.5,
+            fontName='Helvetica',
+            fontSize=6.5,
+            leading=9,
             textColor=colors.HexColor("#64748B")
         )
 
         story = []
 
-        # 1. Header Banner
+        # 1. Document Header
         header_table_data = [
             [
                 Paragraph("<b>PACKSURE AI</b><br/><font size=7 color='#06B6D4'>LEGAL METROLOGY REGULATORY COMPLIANCE SYSTEM</font>", title_style),
@@ -1188,12 +1233,23 @@ class ReportGenerator:
         story.append(Paragraph(f"<font size=7 color='#475569'><b>Deterministic Formula:</b> {formula_text} &nbsp;|&nbsp; <b>Standards:</b> 90-100% Compliant, 70-89% Mostly Compliant, 40-69% Needs Review, 0-39% High Risk</font>", meta_style))
         story.append(Spacer(1, 8))
 
-        # 3. Product Details & Embedded Packaging Photo
-        story.append(Paragraph("Product Declarations & Physical Label Image", section_heading))
+        # 3. Product Details & Embedded Packaging Photos
+        imgs_to_embed = []
+        if image_paths:
+            for p in image_paths:
+                if p and os.path.exists(p) and p not in imgs_to_embed:
+                    imgs_to_embed.append(p)
+        if image_path and os.path.exists(image_path) and image_path not in imgs_to_embed:
+            imgs_to_embed.insert(0, image_path)
 
-        img_flowable = cls._create_image_flowable(image_path, max_w=140, max_h=130)
-        if not img_flowable:
-            img_flowable = Paragraph("<font size=8 color='#94A3B8'><i>Packaging Photo<br/>Not Attached</i></font>", ParagraphStyle('NoImg', parent=body_style, alignment=1))
+        for fn in ext_dict.get("image_filenames", []):
+            cand = os.path.join(os.path.dirname(output_path), fn)
+            if os.path.exists(cand) and cand not in imgs_to_embed:
+                imgs_to_embed.append(cand)
+
+        total_imgs = len(imgs_to_embed)
+        section_title = f"Product Declarations & Packaging Photos (Uploaded Images: {max(1, total_imgs)})"
+        story.append(Paragraph(section_title, section_heading))
 
         details_table_data = [
             [
@@ -1227,26 +1283,68 @@ class ReportGenerator:
                 Paragraph(fields.get("customer_care") or "<font color='#F59E0B'>Missing</font>", body_style)
             ]
         ]
-        t_details = Table(details_table_data, colWidths=[90, 100, 95, 95])
-        t_details.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
-            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
-            ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-            ('PADDING', (0, 0), (-1, -1), 4),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ]))
 
-        split_container = [
-            [img_flowable, t_details]
-        ]
-        t_split = Table(split_container, colWidths=[150, 390])
-        t_split.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ALIGN', (0, 0), (0, 0), 'CENTER'),
-            ('PADDING', (0, 0), (-1, -1), 0),
-        ]))
-        story.append(t_split)
-        story.append(Spacer(1, 8))
+        if total_imgs > 1:
+            t_details = Table(details_table_data, colWidths=[120, 150, 130, 140])
+            t_details.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+                ('PADDING', (0, 0), (-1, -1), 3.5),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ]))
+            story.append(t_details)
+            story.append(Spacer(1, 6))
+
+            surface_names = ["Front View", "Back View", "Side View", "Bottom View"]
+            img_cells = []
+            lbl_cells = []
+            max_gallery_w = 540 / min(4, total_imgs)
+            for idx, p in enumerate(imgs_to_embed[:4]):
+                img_f = cls._create_image_flowable(p, max_w=max_gallery_w - 10, max_h=90)
+                if not img_f:
+                    img_f = Paragraph("<font size=7 color='#94A3B8'><i>Image Not Available</i></font>", body_style)
+                lbl_text = surface_names[idx] if idx < len(surface_names) else f"View {idx + 1}"
+                img_cells.append(img_f)
+                lbl_cells.append(Paragraph(f"<font size=7 color='#0F172A'><b>{lbl_text}</b></font>", ParagraphStyle('ImgLbl', parent=body_style, alignment=1)))
+            
+            t_gallery = Table([img_cells, lbl_cells], colWidths=[max_gallery_w] * len(img_cells))
+            t_gallery.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F1F5F9")),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+                ('PADDING', (0, 0), (-1, -1), 3),
+            ]))
+            story.append(t_gallery)
+            story.append(Spacer(1, 8))
+        else:
+            single_img_path = imgs_to_embed[0] if imgs_to_embed else None
+            img_flowable = cls._create_image_flowable(single_img_path, max_w=140, max_h=130)
+            if not img_flowable:
+                img_flowable = Paragraph("<font size=8 color='#94A3B8'><i>Packaging Photo<br/>Not Attached</i></font>", ParagraphStyle('NoImg', parent=body_style, alignment=1))
+
+            t_details = Table(details_table_data, colWidths=[90, 100, 95, 95])
+            t_details.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+                ('PADDING', (0, 0), (-1, -1), 4),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ]))
+
+            split_container = [
+                [img_flowable, t_details]
+            ]
+            t_split = Table(split_container, colWidths=[150, 390])
+            t_split.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+                ('PADDING', (0, 0), (-1, -1), 0),
+            ]))
+            story.append(t_split)
+            story.append(Spacer(1, 8))
 
         # 4. OCR Extraction Diagnostics Summary
         raw_text_snippet = ext_dict.get("raw_text", "").replace("\n", " ")[:200]
@@ -1441,9 +1539,14 @@ async def scan(
         saved_urls.append(f"/uploads/{unique_fn}")
 
     # OCR + Rules Evaluation across all uploaded images
-    ocr_res = await OCREngine.process_images(saved_paths)
+    ocr_res = await OCREngine.process_images(saved_paths, saved_filenames)
     fields = ocr_res["fields"]
     fields_confidence = ocr_res.get("fields_confidence", {})
+    per_image_results = ocr_res.get("per_image_results", [])
+
+    print(f"Images stored: {len(saved_filenames)}")
+    print(f"OCR results: {len(per_image_results)}")
+    print(f"Report images: {len(saved_filenames)}")
 
     if product_name and product_name.strip():
         fields["commodity_name"] = product_name.strip()
@@ -1491,6 +1594,7 @@ async def scan(
         "detected_category": detected_cat,
         "raw_text": ocr_res["raw_text"],
         "bounding_boxes": ocr_res["bounding_boxes"],
+        "per_image_results": per_image_results,
         "rule_checks": eval_res["rule_checks"],
         "summary": summary,
         "risk_percentage": risk_percentage,
@@ -1511,6 +1615,23 @@ async def scan(
     )
     db.add(scan_res)
     await db.flush()
+
+    # Save ScanImage records for every uploaded image
+    for img_item in per_image_results:
+        idx = img_item.get("image_index", 0)
+        img_fn = saved_filenames[idx] if idx < len(saved_filenames) else img_item.get("image_name", "")
+        scan_img = ScanImage(
+            scan_id=scan_res.id,
+            image_index=idx,
+            image_name=img_item.get("image_name", img_fn),
+            image_url=f"/uploads/{img_fn}",
+            image_filename=img_fn,
+            surface_label=img_item.get("surface_label", f"View {idx + 1}"),
+            ocr_text=img_item.get("ocr_text", ""),
+            confidence=img_item.get("confidence", 0.9),
+            bounding_boxes=img_item.get("bounding_boxes", [])
+        )
+        db.add(scan_img)
 
     report_code = f"PSR-{uuid.uuid4().hex[:6].upper()}"
     report = Report(
@@ -1727,11 +1848,20 @@ async def download_pdf(report_id: int, db: AsyncSession = Depends(get_db)):
     rep, scan, prod = row
     pdf_path = os.path.join(UPLOAD_DIR, f"Report_{rep.report_code}.pdf")
 
-    img_path = None
+    img_paths = []
+    details = rep.details or {}
+    for fn in details.get("image_filenames", []):
+        cand = os.path.join(UPLOAD_DIR, os.path.basename(fn))
+        if os.path.exists(cand) and cand not in img_paths:
+            img_paths.append(cand)
+    for u in details.get("image_urls", []):
+        cand = os.path.join(UPLOAD_DIR, os.path.basename(u))
+        if os.path.exists(cand) and cand not in img_paths:
+            img_paths.append(cand)
     if scan.image_filename:
-        cand = os.path.join(UPLOAD_DIR, scan.image_filename)
-        if os.path.exists(cand):
-            img_path = cand
+        cand = os.path.join(UPLOAD_DIR, os.path.basename(scan.image_filename))
+        if os.path.exists(cand) and cand not in img_paths:
+            img_paths.append(cand)
 
     ReportGenerator.generate_pdf(
         report_code=rep.report_code,
@@ -1742,8 +1872,9 @@ async def download_pdf(report_id: int, db: AsyncSession = Depends(get_db)):
         summary=rep.summary,
         rule_checks=rep.details.get("rule_checks", []) if rep.details else [],
         output_path=pdf_path,
-        image_path=img_path,
-        extracted_data=rep.details
+        image_path=img_paths[0] if img_paths else None,
+        extracted_data=rep.details,
+        image_paths=img_paths
     )
     return FileResponse(pdf_path, media_type="application/pdf", filename=f"Report_{rep.report_code}.pdf")
 
@@ -2021,43 +2152,43 @@ async def index_ui():
 
               <div id="step-2" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
                 <div id="step-icon-2" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">2</div>
-                <div class="text-[11px] font-bold text-slate-300 truncate">Reading Labels...</div>
+                <div id="step-title-2" class="text-[11px] font-bold text-slate-300 truncate">Image 2/4 → OCR</div>
                 <div id="step-status-2" class="text-[9px] text-slate-500">Pending</div>
               </div>
 
               <div id="step-3" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
                 <div id="step-icon-3" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">3</div>
-                <div class="text-[11px] font-bold text-slate-300 truncate">Combining OCR...</div>
+                <div id="step-title-3" class="text-[11px] font-bold text-slate-300 truncate">Image 3/4 → OCR</div>
                 <div id="step-status-3" class="text-[9px] text-slate-500">Pending</div>
               </div>
 
               <div id="step-4" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
                 <div id="step-icon-4" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">4</div>
-                <div class="text-[11px] font-bold text-slate-300 truncate">Detecting Product...</div>
+                <div id="step-title-4" class="text-[11px] font-bold text-slate-300 truncate">Image 4/4 → OCR</div>
                 <div id="step-status-4" class="text-[9px] text-slate-500">Pending</div>
               </div>
 
               <div id="step-5" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
                 <div id="step-icon-5" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">5</div>
-                <div class="text-[11px] font-bold text-slate-300 truncate">Extracting Declarations...</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Combining OCR</div>
                 <div id="step-status-5" class="text-[9px] text-slate-500">Pending</div>
               </div>
 
               <div id="step-6" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
                 <div id="step-icon-6" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">6</div>
-                <div class="text-[11px] font-bold text-slate-300 truncate">Checking LM Rules...</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Extracting information</div>
                 <div id="step-status-6" class="text-[9px] text-slate-500">Pending</div>
               </div>
 
               <div id="step-7" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
                 <div id="step-icon-7" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">7</div>
-                <div class="text-[11px] font-bold text-slate-300 truncate">Calculating Compliance...</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Compliance checking</div>
                 <div id="step-status-7" class="text-[9px] text-slate-500">Pending</div>
               </div>
 
               <div id="step-8" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
                 <div id="step-icon-8" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">8</div>
-                <div class="text-[11px] font-bold text-slate-300 truncate">Generating Report...</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Generating report</div>
                 <div id="step-status-8" class="text-[9px] text-slate-500">Pending</div>
               </div>
             </div>
@@ -2446,14 +2577,15 @@ async def index_ui():
       document.getElementById('scan-progress-stepper').classList.remove('hidden');
 
       // 8 sequential live stages
-      setStepperStage(1, 12, '1/8: Uploading Images ✓');
-      const t2 = setTimeout(() => setStepperStage(2, 25, '2/8: Reading Labels...'), 400);
-      const t3 = setTimeout(() => setStepperStage(3, 40, '3/8: Combining OCR...'), 1000);
-      const t4 = setTimeout(() => setStepperStage(4, 55, '4/8: Detecting Product...'), 1800);
-      const t5 = setTimeout(() => setStepperStage(5, 70, '5/8: Extracting Declarations...'), 2600);
-      const t6 = setTimeout(() => setStepperStage(6, 82, '6/8: Checking Legal Metrology Rules...'), 3400);
-      const t7 = setTimeout(() => setStepperStage(7, 92, '7/8: Calculating Compliance...'), 4200);
-      const t8 = setTimeout(() => setStepperStage(8, 97, '8/8: Generating Report...'), 4800);
+      const totalImgs = allFiles.length;
+      setStepperStage(1, 12, 'Image 1/' + totalImgs + ' → OCR');
+      const t2 = setTimeout(() => setStepperStage(2, 25, totalImgs >= 2 ? 'Image 2/' + totalImgs + ' → OCR' : 'Combining OCR...'), 450);
+      const t3 = setTimeout(() => setStepperStage(3, 38, totalImgs >= 3 ? 'Image 3/' + totalImgs + ' → OCR' : 'Combining OCR...'), 950);
+      const t4 = setTimeout(() => setStepperStage(4, 50, totalImgs >= 4 ? 'Image 4/' + totalImgs + ' → OCR' : 'Combining OCR...'), 1450);
+      const t5 = setTimeout(() => setStepperStage(5, 65, 'Combining OCR...'), 2000);
+      const t6 = setTimeout(() => setStepperStage(6, 78, 'Extracting information...'), 2600);
+      const t7 = setTimeout(() => setStepperStage(7, 88, 'Compliance checking...'), 3200);
+      const t8 = setTimeout(() => setStepperStage(8, 96, 'Generating report...'), 3800);
 
       try {
         const formData = new FormData();

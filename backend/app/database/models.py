@@ -31,6 +31,25 @@ class ScanResult(Base):
 
     product = relationship("Product", back_populates="scans")
     reports = relationship("Report", back_populates="scan", cascade="all, delete-orphan")
+    images = relationship("ScanImage", back_populates="scan", cascade="all, delete-orphan")
+
+
+class ScanImage(Base):
+    __tablename__ = "scan_images"
+
+    id = Column(Integer, primary_key=True, index=True)
+    scan_id = Column(Integer, ForeignKey("scan_results.id"), nullable=False)
+    image_index = Column(Integer, nullable=False, default=0)
+    image_name = Column(String(255), nullable=False)
+    image_url = Column(String(500), nullable=False)
+    image_filename = Column(String(255), nullable=False)
+    surface_label = Column(String(50), nullable=True)  # Front, Back, Side, Bottom
+    ocr_text = Column(Text, nullable=True)
+    confidence = Column(Float, nullable=True)
+    bounding_boxes = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    scan = relationship("ScanResult", back_populates="images")
 
 
 class Report(Base):
@@ -48,3 +67,4 @@ class Report(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
     scan = relationship("ScanResult", back_populates="reports")
+

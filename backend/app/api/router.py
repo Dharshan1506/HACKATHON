@@ -9,7 +9,7 @@ from sqlalchemy import select, desc
 
 from app.config import settings
 from app.database.connection import get_db
-from app.database.models import Product, ScanResult, Report
+from app.database.models import Product, ScanResult, Report, ScanImage
 from app.ocr.engine import OCREngine
 from app.ai.analyzer import ComplianceAIAnalyzer
 from app.compliance.rules import LegalMetrologyRulesEngine, RulesRegistry
@@ -83,9 +83,14 @@ async def scan_product(
         saved_urls.append(f"/uploads/{unique_fn}")
 
     # 1. Run OCR on all uploaded packaging surfaces
-    ocr_result = await OCREngine.process_images(saved_paths)
+    ocr_result = await OCREngine.process_images(saved_paths, saved_filenames)
     fields = ocr_result["fields"]
     fields_confidence = ocr_result.get("fields_confidence", {})
+    per_image_results = ocr_result.get("per_image_results", [])
+
+    print(f"Images stored: {len(saved_filenames)}")
+    print(f"OCR results: {len(per_image_results)}")
+    print(f"Report images: {len(saved_filenames)}")
 
     if clean_p_name:
         fields["commodity_name"] = clean_p_name
@@ -119,6 +124,7 @@ async def scan_product(
         "detected_category": detected_cat,
         "raw_text": ocr_result["raw_text"],
         "bounding_boxes": ocr_result["bounding_boxes"],
+        "per_image_results": per_image_results,
         "rule_checks": compliance_analysis["rule_checks"],
         "summary": compliance_analysis["summary"],
         "action_items": compliance_analysis["action_items"],
@@ -161,7 +167,24 @@ async def scan_product(
     db.add(scan_result)
     await db.flush()
 
-    # 5. Save Report
+    # 5. Save ScanImage records for every uploaded image
+    for img_item in per_image_results:
+        idx = img_item.get("image_index", 0)
+        img_fn = saved_filenames[idx] if idx < len(saved_filenames) else img_item.get("image_name", "")
+        scan_img = ScanImage(
+            scan_id=scan_result.id,
+            image_index=idx,
+            image_name=img_item.get("image_name", img_fn),
+            image_url=f"/uploads/{img_fn}",
+            image_filename=img_fn,
+            surface_label=img_item.get("surface_label", f"View {idx + 1}"),
+            ocr_text=img_item.get("ocr_text", ""),
+            confidence=img_item.get("confidence", 0.9),
+            bounding_boxes=img_item.get("bounding_boxes", [])
+        )
+        db.add(scan_img)
+
+    # 6. Save Report
     report_code = f"PSR-{uuid.uuid4().hex[:6].upper()}"
     report = Report(
         scan_id=scan_result.id,
@@ -449,12 +472,20 @@ async def download_report_pdf(report_id: int, db: AsyncSession = Depends(get_db)
     pdf_filename = f"Report_{rep_data['report_code']}.pdf"
     pdf_path = os.path.join(settings.UPLOAD_DIR, pdf_filename)
     
-    img_path = None
+    img_paths = []
+    details = rep_data.get("details", {})
+    for fn in details.get("image_filenames", []):
+        cand = os.path.join(settings.UPLOAD_DIR, os.path.basename(fn))
+        if os.path.exists(cand) and cand not in img_paths:
+            img_paths.append(cand)
+    for u in details.get("image_urls", []):
+        cand = os.path.join(settings.UPLOAD_DIR, os.path.basename(u))
+        if os.path.exists(cand) and cand not in img_paths:
+            img_paths.append(cand)
     if rep_data.get("image_url"):
-        img_filename = os.path.basename(rep_data["image_url"])
-        candidate_path = os.path.join(settings.UPLOAD_DIR, img_filename)
-        if os.path.exists(candidate_path):
-            img_path = candidate_path
+        cand = os.path.join(settings.UPLOAD_DIR, os.path.basename(rep_data["image_url"]))
+        if os.path.exists(cand) and cand not in img_paths:
+            img_paths.append(cand)
 
     ReportGenerator.generate_pdf_report(
         report_code=rep_data['report_code'],
@@ -466,7 +497,8 @@ async def download_report_pdf(report_id: int, db: AsyncSession = Depends(get_db)
             "extracted_data": rep_data['details']
         },
         output_path=pdf_path,
-        image_path=img_path
+        image_path=img_paths[0] if img_paths else None,
+        image_paths=img_paths
     )
 
     return FileResponse(

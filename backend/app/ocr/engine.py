@@ -51,10 +51,16 @@ class OCREngine:
     """
 
     @classmethod
-    async def process_images(cls, image_paths: List[str]) -> Dict[str, Any]:
+    async def process_images(cls, image_paths: List[str], image_filenames: Optional[List[str]] = None) -> Dict[str, Any]:
         all_raw_texts = []
         all_detected_boxes = []
+        per_image_results = []
         first_width, first_height = 800, 600
+        view_labels = ["Front", "Back", "Side", "Bottom"]
+
+        total_images = len(image_paths)
+        logger.info(f"Received: {total_images} images for multi-image packaging scan")
+        print(f"Received: {total_images} images")
 
         for idx, img_path in enumerate(image_paths):
             if not os.path.exists(img_path):
@@ -68,17 +74,41 @@ class OCREngine:
             except Exception:
                 pass
 
+            surface_label = view_labels[idx] if idx < len(view_labels) else f"View {idx + 1}"
             raw_t, boxes = await asyncio.to_thread(cls._extract_real_text_and_boxes, img_path, w, h)
+            
+            # Compute average confidence for this image
+            conf_values = [b.get("confidence", 0.85) for b in boxes if isinstance(b, dict) and "confidence" in b]
+            avg_conf = round(float(np.mean(conf_values)), 3) if conf_values else (0.92 if raw_t else 0.0)
+
+            img_fn = image_filenames[idx] if image_filenames and idx < len(image_filenames) else os.path.basename(img_path)
+
+            per_image_results.append({
+                "image_index": idx,
+                "image_name": img_fn,
+                "surface_label": surface_label,
+                "image_path": img_path,
+                "ocr_text": raw_t,
+                "confidence": avg_conf,
+                "bounding_boxes": boxes,
+                "dimensions": {"width": w, "height": h}
+            })
+
+            print(f"OCR processed: {idx + 1}/{total_images} ({surface_label}) - {len(boxes)} text segments detected")
+            logger.info(f"OCR processed: {idx + 1}/{total_images} ({surface_label})")
+
             if raw_t:
-                view_labels = ["Front", "Back", "Side", "Bottom"]
-                label_name = view_labels[idx] if idx < len(view_labels) else f"View {idx + 1}"
-                all_raw_texts.append(f"[{label_name} Packaging Surface]\n{raw_t}")
+                all_raw_texts.append(f"[Image {idx + 1}: {surface_label} Packaging Surface]\n{raw_t}")
             for b in boxes:
                 b_copy = dict(b)
                 b_copy["image_index"] = idx
+                b_copy["surface_label"] = surface_label
                 all_detected_boxes.append(b_copy)
 
         combined_raw_text = "\n\n".join(all_raw_texts) if all_raw_texts else "No text detected."
+        print(f"Combined OCR: successful ({len(all_raw_texts)} packaging views combined)")
+        logger.info(f"Combined OCR: successful ({len(all_raw_texts)} views)")
+
         fields, mapped_boxes, fields_confidence = cls._parse_legal_metrology_fields(combined_raw_text, all_detected_boxes, first_width, first_height)
         detected_category = cls.detect_category(combined_raw_text, fields)
 
@@ -89,12 +119,13 @@ class OCREngine:
             "fields_confidence": fields_confidence,
             "detected_category": detected_category,
             "bounding_boxes": mapped_boxes,
-            "processed_images_count": len(image_paths)
+            "per_image_results": per_image_results,
+            "processed_images_count": len(per_image_results)
         }
 
     @classmethod
     async def process_image(cls, image_path: str, filename: str = "") -> Dict[str, Any]:
-        return await cls.process_images([image_path])
+        return await cls.process_images([image_path], [filename] if filename else None)
 
     @classmethod
     def _evaluate_coherence(cls, results: List[Any]) -> Tuple[float, int]:

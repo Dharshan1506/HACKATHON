@@ -174,17 +174,18 @@ export const ScanProduct: React.FC = () => {
     setReport(null);
 
     // 8 sequential live stages
+    const totalImgs = all.length;
     setStepperStage(1);
     setStepperPercent(12);
-    setStepperSubtext('1/8: Uploading Images ✓');
+    setStepperSubtext(`Image 1/${totalImgs} → OCR`);
 
-    const t2 = setTimeout(() => { setStepperStage(2); setStepperPercent(25); setStepperSubtext('2/8: Reading Labels...'); }, 400);
-    const t3 = setTimeout(() => { setStepperStage(3); setStepperPercent(40); setStepperSubtext('3/8: Combining OCR...'); }, 1000);
-    const t4 = setTimeout(() => { setStepperStage(4); setStepperPercent(55); setStepperSubtext('4/8: Detecting Product...'); }, 1800);
-    const t5 = setTimeout(() => { setStepperStage(5); setStepperPercent(70); setStepperSubtext('5/8: Extracting Declarations...'); }, 2600);
-    const t6 = setTimeout(() => { setStepperStage(6); setStepperPercent(82); setStepperSubtext('6/8: Checking Legal Metrology Rules...'); }, 3400);
-    const t7 = setTimeout(() => { setStepperStage(7); setStepperPercent(92); setStepperSubtext('7/8: Calculating Compliance...'); }, 4200);
-    const t8 = setTimeout(() => { setStepperStage(8); setStepperPercent(97); setStepperSubtext('8/8: Generating Report...'); }, 4800);
+    const t2 = setTimeout(() => { setStepperStage(2); setStepperPercent(25); setStepperSubtext(totalImgs >= 2 ? `Image 2/${totalImgs} → OCR` : 'Combining OCR...'); }, 450);
+    const t3 = setTimeout(() => { setStepperStage(3); setStepperPercent(38); setStepperSubtext(totalImgs >= 3 ? `Image 3/${totalImgs} → OCR` : 'Combining OCR...'); }, 950);
+    const t4 = setTimeout(() => { setStepperStage(4); setStepperPercent(50); setStepperSubtext(totalImgs >= 4 ? `Image 4/${totalImgs} → OCR` : 'Combining OCR...'); }, 1450);
+    const t5 = setTimeout(() => { setStepperStage(5); setStepperPercent(65); setStepperSubtext('Combining OCR...'); }, 2000);
+    const t6 = setTimeout(() => { setStepperStage(6); setStepperPercent(78); setStepperSubtext('Extracting information...'); }, 2600);
+    const t7 = setTimeout(() => { setStepperStage(7); setStepperPercent(88); setStepperSubtext('Compliance checking...'); }, 3200);
+    const t8 = setTimeout(() => { setStepperStage(8); setStepperPercent(96); setStepperSubtext('Generating report...'); }, 3800);
 
     try {
       const formData = new FormData();
@@ -1235,14 +1236,14 @@ export const ScanProduct: React.FC = () => {
               {/* 8 Live Analysis Stages */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
                 {[
-                  { step: 1, title: 'Uploading Images' },
-                  { step: 2, title: 'Reading Labels...' },
-                  { step: 3, title: 'Combining OCR...' },
-                  { step: 4, title: 'Detecting Product...' },
-                  { step: 5, title: 'Extracting Declarations...' },
-                  { step: 6, title: 'Checking LM Rules...' },
-                  { step: 7, title: 'Calculating Compliance...' },
-                  { step: 8, title: 'Generating Report...' }
+                  { step: 1, title: `Image 1/${allUploadedFiles.length || 4} → OCR` },
+                  { step: 2, title: `Image 2/${allUploadedFiles.length || 4} → OCR` },
+                  { step: 3, title: `Image 3/${allUploadedFiles.length || 4} → OCR` },
+                  { step: 4, title: `Image 4/${allUploadedFiles.length || 4} → OCR` },
+                  { step: 5, title: 'Combining OCR' },
+                  { step: 6, title: 'Extracting information' },
+                  { step: 7, title: 'Compliance checking' },
+                  { step: 8, title: 'Generating report' }
                 ].map(({ step, title }) => {
                   const isDone = stepperStage > step;
                   const isActive = stepperStage === step;

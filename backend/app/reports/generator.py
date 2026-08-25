@@ -33,7 +33,7 @@ class ReportGenerator:
             return None
 
     @classmethod
-    def generate_pdf_report(cls, report_code: str, product_name: str, scan_data: Dict[str, Any], output_path: str, image_path: Optional[str] = None) -> str:
+    def generate_pdf_report(cls, report_code: str, product_name: str, scan_data: Dict[str, Any], output_path: str, image_path: Optional[str] = None, image_paths: Optional[List[str]] = None) -> str:
         """
         Generates an official, comprehensive PDF Legal Metrology Audit Certificate and Regulatory Report.
         """
@@ -181,13 +181,25 @@ class ReportGenerator:
         story.append(Spacer(1, 8))
 
         # ---------------------------------------------------------
-        # 3. Product Details & Embedded Packaging Photo
+        # 3. Product Details & Embedded Packaging Photos
         # ---------------------------------------------------------
-        story.append(Paragraph("Product Declarations & Physical Label Image", section_heading))
+        imgs_to_embed = []
+        if image_paths:
+            for p in image_paths:
+                if p and os.path.exists(p) and p not in imgs_to_embed:
+                    imgs_to_embed.append(p)
+        if image_path and os.path.exists(image_path) and image_path not in imgs_to_embed:
+            imgs_to_embed.insert(0, image_path)
 
-        img_flowable = cls._create_image_flowable(image_path, max_w=140, max_h=130)
-        if not img_flowable:
-            img_flowable = Paragraph("<font size=8 color='#94A3B8'><i>Packaging Photo<br/>Not Attached</i></font>", ParagraphStyle('NoImg', parent=body_style, alignment=1))
+        # Also search in scan_data image_filenames
+        for fn in ext_data.get("image_filenames", []):
+            cand = os.path.join(os.path.dirname(output_path), fn)
+            if os.path.exists(cand) and cand not in imgs_to_embed:
+                imgs_to_embed.append(cand)
+
+        total_imgs = len(imgs_to_embed)
+        section_title = f"Product Declarations & Packaging Photos (Uploaded Images: {max(1, total_imgs)})"
+        story.append(Paragraph(section_title, section_heading))
 
         details_table_data = [
             [
@@ -221,26 +233,71 @@ class ReportGenerator:
                 Paragraph(fields.get("customer_care") or "<font color='#F59E0B'>Missing</font>", body_style)
             ]
         ]
-        t_details = Table(details_table_data, colWidths=[90, 100, 95, 95])
-        t_details.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
-            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
-            ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
-            ('PADDING', (0, 0), (-1, -1), 4),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ]))
 
-        split_container = [
-            [img_flowable, t_details]
-        ]
-        t_split = Table(split_container, colWidths=[150, 390])
-        t_split.setStyle(TableStyle([
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('ALIGN', (0, 0), (0, 0), 'CENTER'),
-            ('PADDING', (0, 0), (-1, -1), 0),
-        ]))
-        story.append(t_split)
-        story.append(Spacer(1, 8))
+        if total_imgs > 1:
+            # Multi-Image layout: Full-width declarations table + Gallery grid of all uploaded images
+            t_details = Table(details_table_data, colWidths=[120, 150, 130, 140])
+            t_details.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+                ('PADDING', (0, 0), (-1, -1), 3.5),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ]))
+            story.append(t_details)
+            story.append(Spacer(1, 6))
+
+            # Image Gallery (up to 4 per row)
+            surface_names = ["Front View", "Back View", "Side View", "Bottom View"]
+            img_cells = []
+            lbl_cells = []
+            max_gallery_w = 540 / min(4, total_imgs)
+            for idx, p in enumerate(imgs_to_embed[:4]):
+                img_f = cls._create_image_flowable(p, max_w=max_gallery_w - 10, max_h=90)
+                if not img_f:
+                    img_f = Paragraph("<font size=7 color='#94A3B8'><i>Image Not Available</i></font>", body_style)
+                lbl_text = surface_names[idx] if idx < len(surface_names) else f"View {idx + 1}"
+                img_cells.append(img_f)
+                lbl_cells.append(Paragraph(f"<font size=7 color='#0F172A'><b>{lbl_text}</b></font>", ParagraphStyle('ImgLbl', parent=body_style, alignment=1)))
+            
+            t_gallery = Table([img_cells, lbl_cells], colWidths=[max_gallery_w] * len(img_cells))
+            t_gallery.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F1F5F9")),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+                ('PADDING', (0, 0), (-1, -1), 3),
+            ]))
+            story.append(t_gallery)
+            story.append(Spacer(1, 8))
+        else:
+            # Single Image layout: Side-by-side with declarations
+            single_img_path = imgs_to_embed[0] if imgs_to_embed else None
+            img_flowable = cls._create_image_flowable(single_img_path, max_w=140, max_h=130)
+            if not img_flowable:
+                img_flowable = Paragraph("<font size=8 color='#94A3B8'><i>Packaging Photo<br/>Not Attached</i></font>", ParagraphStyle('NoImg', parent=body_style, alignment=1))
+
+            t_details = Table(details_table_data, colWidths=[90, 100, 95, 95])
+            t_details.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor("#F8FAFC")),
+                ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E1")),
+                ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#E2E8F0")),
+                ('PADDING', (0, 0), (-1, -1), 4),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ]))
+
+            split_container = [
+                [img_flowable, t_details]
+            ]
+            t_split = Table(split_container, colWidths=[150, 390])
+            t_split.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+                ('PADDING', (0, 0), (-1, -1), 0),
+            ]))
+            story.append(t_split)
+            story.append(Spacer(1, 8))
 
         # ---------------------------------------------------------
         # 4. OCR Extraction Diagnostics Summary
