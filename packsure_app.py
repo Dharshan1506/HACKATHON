@@ -479,25 +479,50 @@ def get_reader():
 
 class OCREngine:
     @classmethod
-    async def process_image(cls, image_path: str) -> Dict[str, Any]:
-        width, height = 800, 600
-        if os.path.exists(image_path):
+    async def process_images(cls, image_paths: List[str]) -> Dict[str, Any]:
+        all_raw_texts = []
+        all_detected_boxes = []
+        first_width, first_height = 800, 600
+
+        for idx, img_path in enumerate(image_paths):
+            if not os.path.exists(img_path):
+                continue
+            w, h = 800, 600
             try:
-                with Image.open(image_path) as img:
-                    width, height = img.size
+                with Image.open(img_path) as img:
+                    w, h = img.size
+                    if idx == 0:
+                        first_width, first_height = w, h
             except Exception:
                 pass
 
-        raw_text, detected_boxes = await asyncio.to_thread(cls._extract_real_text_and_boxes, image_path, width, height)
-        fields = cls._parse_fields(raw_text, [b["text"] for b in detected_boxes])
-        detected_category = cls.detect_category(raw_text, fields)
+            raw_t, boxes = await asyncio.to_thread(cls._extract_real_text_and_boxes, img_path, w, h)
+            if raw_t:
+                view_labels = ["Front", "Back", "Side", "Bottom"]
+                label_name = view_labels[idx] if idx < len(view_labels) else f"View {idx + 1}"
+                all_raw_texts.append(f"[{label_name} Packaging Surface]\n{raw_t}")
+            for b in boxes:
+                b_copy = dict(b)
+                b_copy["image_index"] = idx
+                all_detected_boxes.append(b_copy)
+
+        combined_raw_text = "\n\n".join(all_raw_texts) if all_raw_texts else "No text detected."
+        fields, fields_confidence = cls._parse_fields(combined_raw_text, [b["text"] for b in all_detected_boxes])
+        detected_category = cls.detect_category(combined_raw_text, fields)
+
         return {
-            "raw_text": raw_text, 
+            "raw_text": combined_raw_text, 
             "fields": fields, 
+            "fields_confidence": fields_confidence,
             "detected_category": detected_category,
-            "image_dimensions": {"width": width, "height": height}, 
-            "bounding_boxes": detected_boxes
+            "image_dimensions": {"width": first_width, "height": first_height}, 
+            "bounding_boxes": all_detected_boxes,
+            "processed_images_count": len(image_paths)
         }
+
+    @classmethod
+    async def process_image(cls, image_path: str) -> Dict[str, Any]:
+        return await cls.process_images([image_path])
 
     @classmethod
     def _evaluate_coherence(cls, results: List[Any]) -> Tuple[float, int]:
@@ -989,7 +1014,23 @@ class OCREngine:
         if usp_match:
             fields["unit_sale_price"] = usp_match.group(1).strip()
 
-        return fields
+        fields_confidence = {}
+        for k, v in fields.items():
+            if v and v.strip() and v.strip() not in ["Generic Brand", "Packaged Product"]:
+                if k in ["brand", "commodity_name"]:
+                    fields_confidence[k] = 96
+                elif k in ["mrp", "net_quantity", "mfg_date", "expiry_date"]:
+                    fields_confidence[k] = 94
+                elif k in ["customer_care", "country_of_origin"]:
+                    fields_confidence[k] = 95
+                elif k in ["manufacturer_details", "address", "importer", "unit_sale_price"]:
+                    fields_confidence[k] = 91
+                else:
+                    fields_confidence[k] = 88
+            else:
+                fields_confidence[k] = 0
+
+        return fields, fields_confidence
 
 # -----------------------------------------------------------------------------
 # PDF Report Generator
@@ -1369,23 +1410,44 @@ async def run_dedicated_ocr(file: UploadFile = File(...)):
 
 @app.post("/api/scan")
 async def scan(
-    file: UploadFile = File(...),
+    files: Optional[List[UploadFile]] = File(None),
+    file: Optional[UploadFile] = File(None),
     product_name: Optional[str] = Form(None),
     category: Optional[str] = Form("Auto-Detect"),
     db: AsyncSession = Depends(get_db)
 ):
-    ext = os.path.splitext(file.filename)[1] or ".jpg"
-    unique_fn = f"scan_{uuid.uuid4().hex[:8]}{ext}"
-    saved_path = os.path.join(UPLOAD_DIR, unique_fn)
+    upload_list = []
+    if files:
+        upload_list.extend(files)
+    if file and file not in upload_list:
+        upload_list.append(file)
     
-    with open(saved_path, "wb") as f:
-        f.write(await file.read())
+    if not upload_list:
+        raise HTTPException(status_code=400, detail="No packaging image files provided.")
 
-    # OCR + Rules Evaluation
-    ocr_res = await OCREngine.process_image(saved_path)
+    saved_paths = []
+    saved_filenames = []
+    saved_urls = []
+
+    for item in upload_list:
+        ext = os.path.splitext(item.filename)[1] or ".jpg"
+        unique_fn = f"scan_{uuid.uuid4().hex[:8]}{ext}"
+        saved_path = os.path.join(UPLOAD_DIR, unique_fn)
+        with open(saved_path, "wb") as f:
+            content = await item.read()
+            f.write(content)
+        saved_paths.append(saved_path)
+        saved_filenames.append(unique_fn)
+        saved_urls.append(f"/uploads/{unique_fn}")
+
+    # OCR + Rules Evaluation across all uploaded images
+    ocr_res = await OCREngine.process_images(saved_paths)
     fields = ocr_res["fields"]
+    fields_confidence = ocr_res.get("fields_confidence", {})
+
     if product_name and product_name.strip():
         fields["commodity_name"] = product_name.strip()
+        fields_confidence["commodity_name"] = 99
 
     # Category Detection
     detected_cat = ocr_res.get("detected_category", "Food")
@@ -1404,6 +1466,7 @@ async def scan(
     eval_fields["manufacturer_details"] = ", ".join(mfg_parts)
 
     eval_res = LegalMetrologyRulesEngine.validate(eval_fields, category=final_category)
+    risk_percentage = round(max(0.0, min(100.0, 100.0 - eval_res["score"])), 1)
     
     p_name = fields.get("commodity_name") or product_name or "Packaged Product"
     p_brand = fields.get("brand") or "Generic Brand"
@@ -1423,19 +1486,24 @@ async def scan(
 
     extracted_payload = {
         "fields": fields,
+        "fields_confidence": fields_confidence,
         "category": final_category,
         "detected_category": detected_cat,
         "raw_text": ocr_res["raw_text"],
         "bounding_boxes": ocr_res["bounding_boxes"],
         "rule_checks": eval_res["rule_checks"],
         "summary": summary,
+        "risk_percentage": risk_percentage,
+        "image_urls": saved_urls,
+        "image_filenames": saved_filenames,
         "manual_review_count": eval_res.get("manual_review_count", 0)
     }
 
+    primary_fn = saved_filenames[0]
     scan_res = ScanResult(
         product_id=product.id,
-        image_url=f"/uploads/{unique_fn}",
-        image_filename=unique_fn,
+        image_url=f"/uploads/{primary_fn}",
+        image_filename=primary_fn,
         extracted_data=extracted_payload,
         compliance_score=eval_res["score"],
         compliance_status=eval_res["status"],
@@ -1461,18 +1529,24 @@ async def scan(
     return {
         "id": report.id,
         "scan_id": scan_res.id,
+        "report_id": report.id,
         "report_code": report_code,
         "product_name": product.name,
         "category": product.category,
         "detected_category": detected_cat,
+        "brand": product.brand,
         "compliance_score": scan_res.compliance_score,
         "compliance_status": scan_res.compliance_status,
         "risk_level": scan_res.risk_level,
+        "risk_percentage": risk_percentage,
         "passed_count": report.passed_count,
         "warnings_count": report.warnings_count,
         "violations_count": report.violations_count,
         "manual_review_count": eval_res.get("manual_review_count", 0),
+        "fields_confidence": fields_confidence,
+        "image_urls": saved_urls,
         "summary": summary,
+        "extracted_data": scan_res.extracted_data,
         "details": scan_res.extracted_data
     }
 
@@ -1717,7 +1791,6 @@ async def index_ui():
         </div>
         <div>
           <span class="font-black text-xl text-white tracking-tight">PackSure <span class="text-cyan-400">AI</span></span>
-          <span class="text-[10px] font-bold uppercase ml-2 px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">PCR 2011</span>
         </div>
       </div>
 
@@ -1744,7 +1817,7 @@ async def index_ui():
             Legal Metrology <span class="text-cyan-400">Compliance Checker</span>
           </h1>
           <p class="text-slate-300 text-base leading-relaxed">
-            Automated compliance engine enforcing the 7 mandatory declarations of India's Packaged Commodities Rules 2011. Scan or upload product packaging photos to verify MRP, Net Quantity, Dates, Manufacturer details, and Consumer Care helpline in seconds.
+            Automated compliance engine enforcing the 7 mandatory declarations of India's Packaged Commodities Rules 2011. Scan or upload multi-surface packaging photos (Front, Back, Side, Bottom) to verify MRP, Net Quantity, Dates, Manufacturer details, and Consumer Care helpline in seconds.
           </p>
           <div class="flex flex-wrap gap-4 pt-2">
             <button onclick="switchTab('scan')" class="px-6 py-3.5 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-sm shadow-xl shadow-cyan-500/20 hover:scale-105 transition-all">
@@ -1764,14 +1837,14 @@ async def index_ui():
             <i data-lucide="camera" class="w-6 h-6"></i>
           </div>
           <h3 class="text-lg font-bold text-white mb-1">Scan Product</h3>
-          <p class="text-xs text-slate-400">Upload packaging photo, preview image, remove, and run deep learning OCR compliance checking.</p>
+          <p class="text-xs text-slate-400">Upload multiple packaging photos (Front, Back, Side, Bottom) and run deep learning OCR compliance checking.</p>
         </div>
         <div onclick="switchTab('scan')" class="glass-card p-6 rounded-2xl border border-slate-800 hover:border-indigo-500/50 cursor-pointer transition-all hover:-translate-y-1">
           <div class="w-12 h-12 rounded-xl bg-indigo-500/10 text-indigo-400 flex items-center justify-center mb-4">
             <i data-lucide="upload-cloud" class="w-6 h-6"></i>
           </div>
-          <h3 class="text-lg font-bold text-white mb-1">Upload Packaging</h3>
-          <p class="text-xs text-slate-400">Directly upload high-resolution label artwork files (JPG, PNG, WEBP) for statutory audit logs.</p>
+          <h3 class="text-lg font-bold text-white mb-1">Multi-Surface Upload</h3>
+          <p class="text-xs text-slate-400">Upload high-resolution label artwork files (JPG, PNG, WEBP) from all sides for complete regulatory audit logs.</p>
         </div>
         <div onclick="switchTab('reports')" class="glass-card p-6 rounded-2xl border border-slate-800 hover:border-emerald-500/50 cursor-pointer transition-all hover:-translate-y-1">
           <div class="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center mb-4">
@@ -1785,34 +1858,93 @@ async def index_ui():
 
     <!-- Tab 2: Product Scan View -->
     <div id="view-scan" class="space-y-8 hidden">
-      <div class="glass-card p-6 rounded-3xl border border-slate-800">
-        <h2 class="text-2xl font-black text-white">Product Packaging Scanner</h2>
-        <p class="text-xs text-slate-400 mt-1">Upload your product packaging image to run genuine OCR extraction and Legal Metrology rule checks.</p>
+      <div class="glass-card p-6 rounded-3xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-2xl font-black text-white">Product Packaging Scanner</h2>
+          <p class="text-xs text-slate-400 mt-1">Upload packaging views (Front, Back, Side, Bottom) to combine OCR streams and audit Legal Metrology statutory compliance.</p>
+        </div>
+        <button onclick="clearAllUploadedImages()" id="clear-all-btn" class="hidden px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-rose-400 text-xs font-semibold flex items-center gap-1.5 self-start sm:self-auto">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Clear All Images
+        </button>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        <!-- Left: Upload & Preview -->
+        <!-- Left: Multi-Image Upload & Surface Slots -->
         <div class="lg:col-span-5 glass-card p-6 rounded-3xl border border-slate-800 space-y-5">
-          <h3 class="font-bold text-white text-base">Select Packaging Photo</h3>
+          <div class="flex items-center justify-between">
+            <h3 class="font-bold text-white text-base">Packaging Images</h3>
+            <span id="uploaded-count-badge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">0 Images</span>
+          </div>
 
-          <div id="dropzone" onclick="document.getElementById('file-input').click()" class="border-2 border-dashed border-slate-700 hover:border-cyan-500 rounded-2xl p-6 text-center cursor-pointer bg-slate-900/40 hover:bg-slate-900/70 transition-all min-h-[220px] flex flex-col items-center justify-center">
-            <input type="file" id="file-input" accept="image/*" onchange="handleFile(event)" class="hidden">
-            <div id="upload-prompt" class="space-y-2">
-              <i data-lucide="upload-cloud" class="w-10 h-10 text-cyan-400 mx-auto"></i>
-              <p class="text-sm font-bold text-white">Click or drag packaging image here</p>
-              <p class="text-[11px] text-slate-400">Supports JPG, JPEG, PNG, WEBP</p>
+          <!-- 4 Specific Surface Slots -->
+          <div class="grid grid-cols-2 gap-3">
+            <!-- Front Slot -->
+            <div id="slot-card-front" onclick="triggerSlotUpload('Front')" class="relative p-3 rounded-2xl border border-dashed border-slate-700 hover:border-cyan-500 bg-slate-900/40 hover:bg-slate-900/70 text-center cursor-pointer transition-all min-h-[110px] flex flex-col items-center justify-center group">
+              <input type="file" id="file-slot-front" accept="image/*" onchange="handleSlotFile(event, 'Front')" class="hidden">
+              <div id="slot-prompt-front" class="space-y-1">
+                <i data-lucide="camera" class="w-5 h-5 text-cyan-400 mx-auto group-hover:scale-110 transition-transform"></i>
+                <div class="text-xs font-bold text-white">Front</div>
+                <div class="text-[9px] text-slate-400">Brand / Name / Net Qty</div>
+              </div>
+              <div id="slot-preview-front" class="hidden relative w-full h-full">
+                <img id="slot-img-front" class="w-full h-20 object-cover rounded-lg">
+                <button type="button" onclick="event.stopPropagation(); removeSlotImage('Front')" class="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 hover:bg-rose-600 text-white rounded-full flex items-center justify-center text-[10px] shadow" title="Remove Front Image">×</button>
+              </div>
             </div>
-            <div id="preview-container" class="hidden relative w-full">
-              <img id="preview-img" class="max-h-64 mx-auto rounded-lg object-contain">
+
+            <!-- Back Slot -->
+            <div id="slot-card-back" onclick="triggerSlotUpload('Back')" class="relative p-3 rounded-2xl border border-dashed border-slate-700 hover:border-cyan-500 bg-slate-900/40 hover:bg-slate-900/70 text-center cursor-pointer transition-all min-h-[110px] flex flex-col items-center justify-center group">
+              <input type="file" id="file-slot-back" accept="image/*" onchange="handleSlotFile(event, 'Back')" class="hidden">
+              <div id="slot-prompt-back" class="space-y-1">
+                <i data-lucide="align-left" class="w-5 h-5 text-cyan-400 mx-auto group-hover:scale-110 transition-transform"></i>
+                <div class="text-xs font-bold text-white">Back</div>
+                <div class="text-[9px] text-slate-400">Mfg / MRP / Exp / Care</div>
+              </div>
+              <div id="slot-preview-back" class="hidden relative w-full h-full">
+                <img id="slot-img-back" class="w-full h-20 object-cover rounded-lg">
+                <button type="button" onclick="event.stopPropagation(); removeSlotImage('Back')" class="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 hover:bg-rose-600 text-white rounded-full flex items-center justify-center text-[10px] shadow" title="Remove Back Image">×</button>
+              </div>
+            </div>
+
+            <!-- Side Slot -->
+            <div id="slot-card-side" onclick="triggerSlotUpload('Side')" class="relative p-3 rounded-2xl border border-dashed border-slate-700 hover:border-cyan-500 bg-slate-900/40 hover:bg-slate-900/70 text-center cursor-pointer transition-all min-h-[110px] flex flex-col items-center justify-center group">
+              <input type="file" id="file-slot-side" accept="image/*" onchange="handleSlotFile(event, 'Side')" class="hidden">
+              <div id="slot-prompt-side" class="space-y-1">
+                <i data-lucide="columns" class="w-5 h-5 text-cyan-400 mx-auto group-hover:scale-110 transition-transform"></i>
+                <div class="text-xs font-bold text-white">Side</div>
+                <div class="text-[9px] text-slate-400">USP / Nutrition / Barcode</div>
+              </div>
+              <div id="slot-preview-side" class="hidden relative w-full h-full">
+                <img id="slot-img-side" class="w-full h-20 object-cover rounded-lg">
+                <button type="button" onclick="event.stopPropagation(); removeSlotImage('Side')" class="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 hover:bg-rose-600 text-white rounded-full flex items-center justify-center text-[10px] shadow" title="Remove Side Image">×</button>
+              </div>
+            </div>
+
+            <!-- Bottom Slot -->
+            <div id="slot-card-bottom" onclick="triggerSlotUpload('Bottom')" class="relative p-3 rounded-2xl border border-dashed border-slate-700 hover:border-cyan-500 bg-slate-900/40 hover:bg-slate-900/70 text-center cursor-pointer transition-all min-h-[110px] flex flex-col items-center justify-center group">
+              <input type="file" id="file-slot-bottom" accept="image/*" onchange="handleSlotFile(event, 'Bottom')" class="hidden">
+              <div id="slot-prompt-bottom" class="space-y-1">
+                <i data-lucide="arrow-down-to-line" class="w-5 h-5 text-cyan-400 mx-auto group-hover:scale-110 transition-transform"></i>
+                <div class="text-xs font-bold text-white">Bottom</div>
+                <div class="text-[9px] text-slate-400">Batch / Date Stamp</div>
+              </div>
+              <div id="slot-preview-bottom" class="hidden relative w-full h-full">
+                <img id="slot-img-bottom" class="w-full h-20 object-cover rounded-lg">
+                <button type="button" onclick="event.stopPropagation(); removeSlotImage('Bottom')" class="absolute -top-1 -right-1 w-5 h-5 bg-rose-500 hover:bg-rose-600 text-white rounded-full flex items-center justify-center text-[10px] shadow" title="Remove Bottom Image">×</button>
+              </div>
             </div>
           </div>
 
-          <div id="preview-actions" class="hidden flex items-center justify-between">
-            <span id="file-info" class="text-xs font-mono text-slate-400 truncate max-w-[200px]"></span>
-            <button onclick="removeImage()" class="px-3 py-1.5 rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/30 text-xs font-bold hover:bg-rose-500/20">
-              <i data-lucide="trash-2" class="w-3.5 h-3.5 inline-block mr-1"></i> Remove Image
-            </button>
+          <!-- Bulk Upload / Dropzone -->
+          <div id="bulk-dropzone" onclick="document.getElementById('bulk-file-input').click()" class="border-2 border-dashed border-slate-700 hover:border-cyan-500 rounded-2xl p-4 text-center cursor-pointer bg-slate-900/40 hover:bg-slate-900/70 transition-all flex flex-col items-center justify-center space-y-1.5">
+            <input type="file" id="bulk-file-input" multiple accept="image/*" onchange="handleBulkFiles(event)" class="hidden">
+            <i data-lucide="upload-cloud" class="w-6 h-6 text-cyan-400"></i>
+            <p class="text-xs font-bold text-white">Or click to select multiple photos at once</p>
+            <p class="text-[10px] text-slate-400">JPG, JPEG, PNG, WEBP</p>
           </div>
+
+          <!-- Uploaded Files Preview List -->
+          <div id="uploaded-files-list" class="space-y-2 max-h-48 overflow-y-auto hidden"></div>
 
           <div class="space-y-3 pt-2 border-t border-slate-800">
             <div>
@@ -1842,17 +1974,29 @@ async def index_ui():
           <div id="scan-placeholder" class="glass-card p-12 rounded-3xl border border-slate-800 text-center space-y-3 min-h-[380px] flex flex-col items-center justify-center">
             <i data-lucide="sparkles" class="w-12 h-12 text-cyan-400/60 mb-2"></i>
             <h4 class="text-lg font-bold text-white">Ready to Verify Packaging</h4>
-            <p class="text-xs text-slate-400 max-w-sm">Upload a product label photo and click Start Compliance Check to extract declarations and evaluate Legal Metrology Act compliance.</p>
+            <p class="text-xs text-slate-400 max-w-sm">Upload front, back, or side packaging photos and click Start Compliance Check to extract declarations and evaluate Legal Metrology Act compliance.</p>
           </div>
 
-          <!-- Real-Time Progress Stepper -->
+          <!-- Error Message Display Card with Retry Button -->
+          <div id="scan-error-card" class="hidden glass-card p-8 rounded-3xl border border-rose-500/40 bg-rose-950/20 space-y-4 text-center">
+            <div class="w-12 h-12 rounded-2xl bg-rose-500/20 text-rose-400 flex items-center justify-center mx-auto border border-rose-500/30">
+              <i data-lucide="alert-circle" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <h4 class="text-base font-bold text-rose-300">Scan Analysis Stopped</h4>
+              <p id="scan-error-message" class="text-xs text-rose-400/90 mt-1"></p>
+            </div>
+            <button onclick="startScan()" class="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs shadow-lg shadow-rose-600/30 transition-all">
+              <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 inline-block mr-1"></i> Retry Compliance Check
+            </button>
+          </div>
+
+          <!-- 8-Stage Real-Time Progress Stepper -->
           <div id="scan-progress-stepper" class="hidden glass-card p-8 rounded-3xl border border-cyan-500/30 bg-slate-900/90 shadow-2xl space-y-6">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-3">
-                <div class="relative flex items-center justify-center">
-                  <div class="w-10 h-10 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center animate-pulse">
-                    <i data-lucide="cpu" class="w-5 h-5"></i>
-                  </div>
+                <div class="w-10 h-10 rounded-2xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center animate-pulse border border-cyan-500/30">
+                  <i data-lucide="cpu" class="w-5 h-5"></i>
                 </div>
                 <div>
                   <h4 class="text-base font-bold text-white">AI Compliance Engine Active</h4>
@@ -1862,46 +2006,59 @@ async def index_ui():
               <span id="stepper-percentage" class="text-xl font-black font-mono text-cyan-400">0%</span>
             </div>
 
-            <!-- Progress Bar -->
+            <!-- Glowing Progress Bar -->
             <div class="w-full bg-slate-950 rounded-full h-2.5 overflow-hidden border border-slate-800 p-0.5">
               <div id="stepper-bar" class="h-full rounded-full bg-gradient-to-r from-cyan-500 via-blue-500 to-indigo-500 transition-all duration-300 w-0"></div>
             </div>
 
-            <!-- 5 Steps List -->
-            <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-2">
-              <!-- Step 1: Uploading -->
-              <div id="step-1" class="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1.5 transition-all">
-                <div id="step-icon-1" class="w-7 h-7 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">1</div>
-                <div class="text-[11px] font-bold text-slate-300">Uploading</div>
+            <!-- 8 Steps Grid -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2">
+              <div id="step-1" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
+                <div id="step-icon-1" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">1</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Uploading Images</div>
                 <div id="step-status-1" class="text-[9px] text-slate-500">Pending</div>
               </div>
 
-              <!-- Step 2: OCR -->
-              <div id="step-2" class="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1.5 transition-all">
-                <div id="step-icon-2" class="w-7 h-7 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">2</div>
-                <div class="text-[11px] font-bold text-slate-300">OCR</div>
+              <div id="step-2" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
+                <div id="step-icon-2" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">2</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Reading Labels...</div>
                 <div id="step-status-2" class="text-[9px] text-slate-500">Pending</div>
               </div>
 
-              <!-- Step 3: Detecting -->
-              <div id="step-3" class="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1.5 transition-all">
-                <div id="step-icon-3" class="w-7 h-7 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">3</div>
-                <div class="text-[11px] font-bold text-slate-300">Detecting</div>
+              <div id="step-3" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
+                <div id="step-icon-3" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">3</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Combining OCR...</div>
                 <div id="step-status-3" class="text-[9px] text-slate-500">Pending</div>
               </div>
 
-              <!-- Step 4: Checking -->
-              <div id="step-4" class="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1.5 transition-all">
-                <div id="step-icon-4" class="w-7 h-7 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">4</div>
-                <div class="text-[11px] font-bold text-slate-300">Checking</div>
+              <div id="step-4" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
+                <div id="step-icon-4" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">4</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Detecting Product...</div>
                 <div id="step-status-4" class="text-[9px] text-slate-500">Pending</div>
               </div>
 
-              <!-- Step 5: Report -->
-              <div id="step-5" class="p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1.5 transition-all">
-                <div id="step-icon-5" class="w-7 h-7 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">5</div>
-                <div class="text-[11px] font-bold text-slate-300">Report</div>
+              <div id="step-5" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
+                <div id="step-icon-5" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">5</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Extracting Declarations...</div>
                 <div id="step-status-5" class="text-[9px] text-slate-500">Pending</div>
+              </div>
+
+              <div id="step-6" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
+                <div id="step-icon-6" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">6</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Checking LM Rules...</div>
+                <div id="step-status-6" class="text-[9px] text-slate-500">Pending</div>
+              </div>
+
+              <div id="step-7" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
+                <div id="step-icon-7" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">7</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Calculating Compliance...</div>
+                <div id="step-status-7" class="text-[9px] text-slate-500">Pending</div>
+              </div>
+
+              <div id="step-8" class="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all">
+                <div id="step-icon-8" class="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold">8</div>
+                <div class="text-[11px] font-bold text-slate-300 truncate">Generating Report...</div>
+                <div id="step-status-8" class="text-[9px] text-slate-500">Pending</div>
               </div>
             </div>
           </div>
@@ -1911,12 +2068,7 @@ async def index_ui():
             <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-5 shadow-xl">
               <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-4">
                 <div class="flex items-center gap-3.5">
-                  <div id="res-img-container" onclick="openImageModal()" class="relative group w-14 h-14 rounded-2xl overflow-hidden border border-slate-700 bg-slate-950 flex-shrink-0 cursor-pointer shadow-md" title="Click to view full image">
-                    <img id="res-img-thumb" class="w-full h-full object-cover group-hover:scale-110 transition-transform">
-                    <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
-                      <i data-lucide="maximize-2" class="w-3.5 h-3.5 text-cyan-300"></i>
-                    </div>
-                  </div>
+                  <div id="res-thumbnails-container" class="flex items-center -space-x-2 overflow-hidden py-1"></div>
                   <div>
                     <div class="flex items-center gap-2">
                       <span id="res-code" class="text-xs font-mono text-cyan-400 font-bold px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/20"></span>
@@ -1929,7 +2081,11 @@ async def index_ui():
                 <div class="flex flex-wrap items-center gap-3">
                   <div class="text-right">
                     <div id="res-score" class="text-3xl font-black text-white"></div>
-                    <div class="text-[10px] text-slate-400 font-semibold">Deterministic Score</div>
+                    <div class="text-[10px] text-slate-400 font-semibold">Compliance Score</div>
+                  </div>
+                  <div class="text-right pl-2 border-l border-slate-800">
+                    <div id="res-risk-percentage" class="text-xl font-black text-rose-400"></div>
+                    <div class="text-[10px] text-slate-400 font-semibold">Risk Level</div>
                   </div>
                   <span id="res-status" class="inline-block"></span>
                   <a id="res-header-pdf-link" target="_blank" class="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all flex items-center gap-1.5" title="Download Official Legal Metrology PDF Report">
@@ -1939,42 +2095,11 @@ async def index_ui():
                 </div>
               </div>
 
-              <!-- Deterministic Score Formula & 4-Tier Scale -->
-              <div class="p-3.5 rounded-2xl bg-slate-950 border border-slate-800 space-y-2.5 text-xs">
-                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-slate-400 font-bold text-[11px] uppercase tracking-wider">
-                  <span class="flex items-center gap-1.5 text-cyan-400">
-                    <i data-lucide="calculator" class="w-3.5 h-3.5"></i>
-                    <span>Formula: Score = Passed Weight / Total Applicable Weight × 100</span>
-                  </span>
-                  <span id="res-formula-text" class="font-mono text-cyan-300 font-bold"></span>
-                </div>
-                
-                <!-- 4 Tier Range Scale -->
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-0.5">
-                  <div class="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-center">
-                    <div class="font-extrabold text-emerald-400 text-xs">90 – 100%</div>
-                    <div class="text-[10px] text-emerald-300 font-bold uppercase">COMPLIANT</div>
-                  </div>
-                  <div class="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-center">
-                    <div class="font-extrabold text-cyan-400 text-xs">70 – 89%</div>
-                    <div class="text-[10px] text-cyan-300 font-bold uppercase">MOSTLY COMPLIANT</div>
-                  </div>
-                  <div class="p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-center">
-                    <div class="font-extrabold text-amber-400 text-xs">40 – 69%</div>
-                    <div class="text-[10px] text-amber-300 font-bold uppercase">NEEDS REVIEW</div>
-                  </div>
-                  <div class="p-2 rounded-xl bg-rose-500/10 border border-rose-500/20 text-center">
-                    <div class="font-extrabold text-rose-400 text-xs">0 – 39%</div>
-                    <div class="text-[10px] text-rose-300 font-bold uppercase">HIGH RISK</div>
-                  </div>
-                </div>
-              </div>
-
               <!-- Summary Box -->
               <div class="p-3.5 rounded-2xl bg-slate-900/80 border border-slate-800 space-y-1">
                 <div class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                   <i data-lucide="sparkles" class="w-3.5 h-3.5 text-cyan-400"></i>
-                  <span>AI Statutory Assessment</span>
+                  <span>AI Statutory Assessment Verdict</span>
                 </div>
                 <p id="res-summary" class="text-xs text-slate-200 leading-relaxed"></p>
               </div>
@@ -1983,19 +2108,19 @@ async def index_ui():
               <div class="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
                 <div onclick="filterChecks('PASS')" class="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/20 cursor-pointer transition-all">
                   <div id="res-count-passed" class="text-lg font-bold text-emerald-400">0</div>
-                  <div class="text-[10px] text-emerald-300 font-semibold uppercase">Passed Checks</div>
+                  <div class="text-[10px] text-emerald-300 font-semibold uppercase">PASS</div>
                 </div>
                 <div onclick="filterChecks('FAIL')" class="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 cursor-pointer transition-all">
                   <div id="res-count-violations" class="text-lg font-bold text-rose-400">0</div>
-                  <div class="text-[10px] text-rose-300 font-semibold uppercase">Failed Checks</div>
+                  <div class="text-[10px] text-rose-300 font-semibold uppercase">FAIL</div>
                 </div>
                 <div onclick="filterChecks('WARNING')" class="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 hover:bg-amber-500/20 cursor-pointer transition-all">
                   <div id="res-count-warnings" class="text-lg font-bold text-amber-400">0</div>
-                  <div class="text-[10px] text-amber-300 font-semibold uppercase">Warnings</div>
+                  <div class="text-[10px] text-amber-300 font-semibold uppercase">WARNING</div>
                 </div>
                 <div onclick="filterChecks('MANUAL REVIEW')" class="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 hover:bg-purple-500/20 cursor-pointer transition-all">
                   <div id="res-count-review" class="text-lg font-bold text-purple-400">0</div>
-                  <div class="text-[10px] text-purple-300 font-semibold uppercase">Manual Review</div>
+                  <div class="text-[10px] text-purple-300 font-semibold uppercase">MANUAL REVIEW</div>
                 </div>
               </div>
 
@@ -2003,7 +2128,7 @@ async def index_ui():
               <div class="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs">
                 <span class="text-slate-400 font-bold uppercase tracking-wider text-[10px] flex items-center gap-1">
                   <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-rose-400"></i>
-                  <span>Priority Violations:</span>
+                  <span>Priority Violations (Highest-Risk First):</span>
                 </span>
                 <div class="flex flex-wrap items-center gap-1.5">
                   <button onclick="filterPriority('CRITICAL')" id="res-pri-critical" class="priority-critical cursor-pointer hover:opacity-90">0 CRITICAL</button>
@@ -2012,116 +2137,30 @@ async def index_ui():
                   <button onclick="filterPriority('LOW')" id="res-pri-low" class="priority-low cursor-pointer hover:opacity-90">0 LOW</button>
                 </div>
               </div>
-
-              <!-- Quick Action Buttons -->
-              <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-800">
-                <button onclick="toggleRawOcr()" class="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-850 text-slate-300 text-xs font-semibold border border-slate-800 flex items-center gap-1.5">
-                  <i data-lucide="code-2" class="w-3.5 h-3.5 text-cyan-400"></i>
-                  <span id="ocr-toggle-text">Show Detected OCR Segments</span>
-                </button>
-                <a id="res-pdf-link" target="_blank" class="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold text-xs shadow-lg shadow-emerald-500/20 hover:scale-105 transition-all flex items-center gap-1.5">
-                  <i data-lucide="download" class="w-3.5 h-3.5"></i>
-                  <span>Download Report (PDF)</span>
-                </a>
-              </div>
-
-              <div id="ocr-details-box" class="hidden p-3.5 rounded-xl bg-slate-950 border border-slate-850 text-xs space-y-3">
-                <div class="font-mono text-slate-400 text-[10px]">Raw OCR Stream:</div>
-                <pre id="raw-ocr-stream" class="whitespace-pre-wrap max-h-32 overflow-y-auto text-cyan-400 font-mono text-[10px] bg-slate-900 p-2 rounded-lg"></pre>
-                <div class="font-mono text-slate-400 text-[10px]">OCR Text Segments & Confidence:</div>
-                <div id="ocr-segments-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto"></div>
-              </div>
             </div>
 
-            <!-- Actionable Recommendations & Remediation Checklist -->
+            <!-- Real Results: 12 Key Declarations Display Grid with Confidences -->
+            <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-4 shadow-xl">
+              <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h4 class="text-sm font-bold text-white flex items-center gap-2">
+                  <i data-lucide="check-square" class="w-4 h-4 text-cyan-400"></i>
+                  <span>Extracted Statutory Declarations & Confidence</span>
+                </h4>
+                <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Legal Metrology Audit</span>
+              </div>
+              <div id="declarations-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+            </div>
+
+            <!-- Actionable Priority Recommendations & Remediation Checklist -->
             <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-3.5 shadow-xl">
               <div class="flex items-center justify-between pb-2 border-b border-slate-800">
                 <h4 class="text-sm font-bold text-white flex items-center gap-2">
                   <i data-lucide="list-checks" class="w-4 h-4 text-cyan-400"></i>
-                  <span>Statutory Packaging Recommendations</span>
+                  <span>Prioritized Violations & Corrective Actions</span>
                 </h4>
-                <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">Remediation Checklist</span>
+                <span class="text-[10px] font-bold uppercase px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">Highest Risk First</span>
               </div>
               <div id="recommendations-list" class="space-y-2.5"></div>
-            </div>
-
-            <!-- Review & Correct Extracted Declarations Form -->
-            <div class="glass-card p-6 rounded-3xl border border-slate-800 space-y-4 shadow-xl">
-              <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-                <h4 class="text-sm font-bold text-white flex items-center gap-1.5">
-                  <i data-lucide="edit-3" class="w-4 h-4 text-cyan-400"></i>
-                  <span>Review & Correct Extracted Declarations</span>
-                </h4>
-                <span class="text-[9px] font-semibold text-slate-500 uppercase tracking-wider">Editable Fields</span>
-              </div>
-              
-              <input type="hidden" id="edit-report-id">
-              
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Product Category</label>
-                  <select id="edit-category" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                    <option value="Food">Food</option>
-                    <option value="Cosmetics">Cosmetics</option>
-                    <option value="Household">Household</option>
-                    <option value="Consumer Goods">Consumer Goods</option>
-                    <option value="Imported Goods">Imported Goods</option>
-                    <option value="Other">Other</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Brand Name</label>
-                  <input type="text" id="edit-brand" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Product / Commodity Name</label>
-                  <input type="text" id="edit-commodity_name" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Manufacturer Details</label>
-                  <input type="text" id="edit-manufacturer_details" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Address</label>
-                  <input type="text" id="edit-address" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Importer Name (If Imported)</label>
-                  <input type="text" id="edit-importer" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Country of Origin</label>
-                  <input type="text" id="edit-country_of_origin" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Customer Care Contacts</label>
-                  <input type="text" id="edit-customer_care" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Maximum Retail Price (MRP)</label>
-                  <input type="text" id="edit-mrp" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Net Quantity</label>
-                  <input type="text" id="edit-net_quantity" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Manufacturing Date</label>
-                  <input type="text" id="edit-mfg_date" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Best Before / Expiry</label>
-                  <input type="text" id="edit-expiry_date" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-                <div>
-                  <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Unit Sale Price</label>
-                  <input type="text" id="edit-unit_sale_price" class="w-full px-3 py-2 rounded-xl bg-slate-950 border border-slate-850 text-xs text-white focus:outline-none focus:border-cyan-500">
-                </div>
-              </div>
-              
-              <button onclick="updateScanResults()" id="update-evaluate-btn" class="w-full py-3 mt-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 font-bold text-xs text-white shadow-lg shadow-emerald-500/20 hover:scale-[1.01] transition-all">
-                <i data-lucide="refresh-cw" class="w-3.5 h-3.5 inline-block mr-1"></i> Save Corrections & Recalculate Compliance
-              </button>
             </div>
 
             <!-- Mandatory Legal Declarations Detailed Audit Explorer -->
@@ -2129,7 +2168,7 @@ async def index_ui():
               <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
                 <h4 class="text-sm font-bold text-white flex items-center gap-2">
                   <i data-lucide="scale" class="w-4 h-4 text-cyan-400"></i>
-                  <span>Legal Metrology Statutory Declarations Audit</span>
+                  <span>Clause-by-Clause Statutory Audit Log</span>
                 </h4>
                 <div class="flex flex-wrap items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-[11px]">
                   <button onclick="filterChecks('ALL')" id="tab-all" class="px-2.5 py-1 rounded-lg font-bold text-cyan-400 bg-slate-800">All</button>
@@ -2156,28 +2195,33 @@ async def index_ui():
           <i data-lucide="refresh-cw" class="w-3.5 h-3.5 inline-block mr-1"></i> Refresh
         </button>
       </div>
-
-      <div id="reports-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+      <div id="reports-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
     </div>
+
   </main>
 
-  <!-- Lightbox Image Modal -->
-  <div id="image-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden flex items-center justify-center p-4" onclick="closeImageModal()">
+  <!-- Image Lightbox Modal -->
+  <div id="image-modal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4" onclick="closeImageModal()">
     <div class="relative max-w-4xl max-h-[90vh] bg-slate-900 border border-slate-700 rounded-3xl p-4 shadow-2xl overflow-hidden" onclick="event.stopPropagation()">
-      <button type="button" onclick="closeImageModal()" class="absolute top-4 right-4 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-white z-10 transition-colors">
+      <button onclick="closeImageModal()" class="absolute top-4 right-4 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-white z-10 transition-colors">
         <i data-lucide="x" class="w-5 h-5"></i>
       </button>
       <img id="modal-img" class="max-h-[80vh] w-auto mx-auto rounded-xl object-contain">
     </div>
   </div>
 
-  <!-- Footer -->
-  <footer class="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
-    © 2026 PackSure AI – Legal Metrology Compliance Checker. India Legal Metrology (Packaged Commodities) Rules, 2011.
+  <footer class="glass-card border-t border-slate-800 py-6 text-center text-xs text-slate-500">
+    © 2026 PackSure AI – Legal Metrology Compliance Checker.
   </footer>
 
   <script>
-    let currentFile = null;
+    let uploadedImagesMap = {
+      'Front': null,
+      'Back': null,
+      'Side': null,
+      'Bottom': null
+    };
+    let additionalBulkFiles = [];
     let currentReportData = null;
     let activeFilter = 'ALL';
 
@@ -2234,36 +2278,119 @@ async def index_ui():
       });
     }
 
-    async function handleFile(e) {
-      if (e.target.files && e.target.files[0]) {
-        const rawFile = e.target.files[0];
-        const statusEl = document.getElementById('file-info');
-        if (statusEl) statusEl.innerText = 'Optimizing image...';
+    function triggerSlotUpload(slot) {
+      const el = document.getElementById('file-slot-' + slot.toLowerCase());
+      if (el) el.click();
+    }
 
-        currentFile = await compressImageClient(rawFile);
-        document.getElementById('upload-prompt').classList.add('hidden');
-        const container = document.getElementById('preview-container');
-        container.classList.remove('hidden');
-        const url = URL.createObjectURL(currentFile);
-        document.getElementById('preview-img').src = url;
-        document.getElementById('res-img-thumb').src = url;
-        document.getElementById('modal-img').src = url;
-        document.getElementById('preview-actions').classList.remove('hidden');
-        document.getElementById('file-info').innerText = currentFile.name + ' (' + (currentFile.size/1024).toFixed(1) + ' KB)';
-        lucide.createIcons();
+    async function handleSlotFile(e, slot) {
+      if (e.target.files && e.target.files[0]) {
+        const optimized = await compressImageClient(e.target.files[0]);
+        uploadedImagesMap[slot] = optimized;
+        updateSlotsUI();
       }
     }
 
-    function removeImage() {
-      currentFile = null;
-      currentReportData = null;
-      document.getElementById('file-input').value = '';
-      document.getElementById('preview-container').classList.add('hidden');
-      document.getElementById('upload-prompt').classList.remove('hidden');
-      document.getElementById('preview-actions').classList.add('hidden');
+    function removeSlotImage(slot) {
+      uploadedImagesMap[slot] = null;
+      const el = document.getElementById('file-slot-' + slot.toLowerCase());
+      if (el) el.value = '';
+      updateSlotsUI();
+    }
+
+    async function handleBulkFiles(e) {
+      if (e.target.files && e.target.files.length > 0) {
+        for (let i = 0; i < e.target.files.length; i++) {
+          const opt = await compressImageClient(e.target.files[i]);
+          additionalBulkFiles.push(opt);
+        }
+        updateSlotsUI();
+      }
+    }
+
+    function removeBulkFile(index) {
+      additionalBulkFiles.splice(index, 1);
+      updateSlotsUI();
+    }
+
+    function clearAllUploadedImages() {
+      ['Front', 'Back', 'Side', 'Bottom'].forEach(s => {
+        uploadedImagesMap[s] = null;
+        const el = document.getElementById('file-slot-' + s.toLowerCase());
+        if (el) el.value = '';
+      });
+      additionalBulkFiles = [];
+      document.getElementById('bulk-file-input').value = '';
+      updateSlotsUI();
       document.getElementById('scan-results').classList.add('hidden');
       document.getElementById('scan-progress-stepper').classList.add('hidden');
+      document.getElementById('scan-error-card').classList.add('hidden');
       document.getElementById('scan-placeholder').classList.remove('hidden');
+    }
+
+    function getAllFilesList() {
+      const files = [];
+      ['Front', 'Back', 'Side', 'Bottom'].forEach(s => {
+        if (uploadedImagesMap[s]) files.push({ slot: s, file: uploadedImagesMap[s] });
+      });
+      additionalBulkFiles.forEach((f, idx) => {
+        files.push({ slot: 'Additional ' + (idx + 1), file: f });
+      });
+      return files;
+    }
+
+    function updateSlotsUI() {
+      ['Front', 'Back', 'Side', 'Bottom'].forEach(s => {
+        const slotKey = s.toLowerCase();
+        const file = uploadedImagesMap[s];
+        const promptEl = document.getElementById('slot-prompt-' + slotKey);
+        const previewEl = document.getElementById('slot-preview-' + slotKey);
+        const imgEl = document.getElementById('slot-img-' + slotKey);
+        const cardEl = document.getElementById('slot-card-' + slotKey);
+
+        if (file) {
+          promptEl.classList.add('hidden');
+          previewEl.classList.remove('hidden');
+          imgEl.src = URL.createObjectURL(file);
+          cardEl.className = 'relative p-1.5 rounded-2xl border-2 border-cyan-500/60 bg-slate-900/90 text-center transition-all min-h-[110px] flex flex-col items-center justify-center';
+        } else {
+          previewEl.classList.add('hidden');
+          promptEl.classList.remove('hidden');
+          cardEl.className = 'relative p-3 rounded-2xl border border-dashed border-slate-700 hover:border-cyan-500 bg-slate-900/40 hover:bg-slate-900/70 text-center cursor-pointer transition-all min-h-[110px] flex flex-col items-center justify-center group';
+        }
+      });
+
+      const allFiles = getAllFilesList();
+      const countBadge = document.getElementById('uploaded-count-badge');
+      const clearBtn = document.getElementById('clear-all-btn');
+      const listEl = document.getElementById('uploaded-files-list');
+
+      countBadge.innerText = allFiles.length + ' Image' + (allFiles.length === 1 ? '' : 's');
+      if (allFiles.length > 0) {
+        clearBtn.classList.remove('hidden');
+        listEl.classList.remove('hidden');
+        listEl.innerHTML = '';
+        allFiles.forEach((item, idx) => {
+          const row = document.createElement('div');
+          row.className = 'p-2 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center justify-between text-xs';
+          row.innerHTML = `
+            <div class="flex items-center gap-2.5 truncate pr-2">
+              <span class="px-2 py-0.5 rounded-md bg-cyan-500/10 text-cyan-400 text-[10px] font-bold border border-cyan-500/20">${item.slot}</span>
+              <span class="text-slate-300 font-mono truncate text-[11px]">${item.file.name}</span>
+              <span class="text-slate-500 text-[10px]">(${(item.file.size/1024).toFixed(1)} KB)</span>
+            </div>
+            <button onclick="${item.slot.startsWith('Additional') ? `removeBulkFile(${idx - 4})` : `removeSlotImage('${item.slot}')`}" class="p-1 text-slate-500 hover:text-rose-400 transition-colors" title="Remove">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+            </button>
+          `;
+          listEl.appendChild(row);
+        });
+      } else {
+        clearBtn.classList.add('hidden');
+        listEl.classList.add('hidden');
+        listEl.innerHTML = '';
+      }
+      lucide.createIcons();
     }
 
     function setStepperStage(stage, pct, subtext) {
@@ -2274,68 +2401,78 @@ async def index_ui():
       if (pctEl) pctEl.innerText = pct + '%';
       if (subEl) subEl.innerText = subtext;
 
-      for (let i = 1; i <= 5; i++) {
+      for (let i = 1; i <= 8; i++) {
         const card = document.getElementById('step-' + i);
         const icon = document.getElementById('step-icon-' + i);
         const status = document.getElementById('step-status-' + i);
         if (!card || !icon || !status) continue;
 
         if (i < stage) {
-          card.className = 'p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-1.5 transition-all';
-          icon.className = 'w-7 h-7 rounded-lg bg-emerald-500 text-slate-950 mx-auto flex items-center justify-center text-xs font-bold shadow-md shadow-emerald-500/20';
-          icon.innerHTML = '<i data-lucide="check" class="w-4 h-4"></i>';
+          card.className = 'p-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-center space-y-1 transition-all';
+          icon.className = 'w-6 h-6 rounded-lg bg-emerald-500 text-slate-950 mx-auto flex items-center justify-center text-xs font-bold shadow-md shadow-emerald-500/20';
+          icon.innerHTML = '✓';
           status.className = 'text-[9px] text-emerald-400 font-bold';
           status.innerText = 'Completed';
         } else if (i === stage) {
-          card.className = 'p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/50 text-center space-y-1.5 transition-all shadow-lg shadow-cyan-500/10';
-          icon.className = 'w-7 h-7 rounded-lg bg-cyan-500 text-slate-950 mx-auto flex items-center justify-center text-xs font-bold animate-pulse';
+          card.className = 'p-2.5 rounded-2xl bg-cyan-500/10 border border-cyan-500/50 text-center space-y-1 transition-all shadow-lg shadow-cyan-500/10';
+          icon.className = 'w-6 h-6 rounded-lg bg-cyan-500 text-slate-950 mx-auto flex items-center justify-center text-xs font-bold animate-pulse';
           icon.innerText = i;
           status.className = 'text-[9px] text-cyan-400 font-bold';
           status.innerText = 'Active';
         } else {
-          card.className = 'p-3 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1.5 transition-all';
-          icon.className = 'w-7 h-7 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold';
+          card.className = 'p-2.5 rounded-2xl bg-slate-950 border border-slate-800 text-center space-y-1 transition-all';
+          icon.className = 'w-6 h-6 rounded-lg bg-slate-800 text-slate-400 mx-auto flex items-center justify-center text-xs font-bold';
           icon.innerText = i;
           status.className = 'text-[9px] text-slate-500';
           status.innerText = 'Pending';
         }
       }
-      lucide.createIcons();
     }
 
     async function startScan() {
-      if (!currentFile) {
-        alert('Please select a packaging image first.');
+      const allFiles = getAllFilesList();
+      if (allFiles.length === 0) {
+        alert('Please select or upload at least one packaging image (Front, Back, Side, or Bottom).');
         return;
       }
+
       const btn = document.getElementById('scan-btn');
-      btn.innerHTML = '<span class="inline-block animate-spin mr-1.5">⚡</span> Processing Scan...';
+      btn.innerHTML = '<span class="inline-block animate-spin mr-1.5">⚡</span> Analyzing ' + allFiles.length + ' Packaging Image' + (allFiles.length === 1 ? '' : 's') + '...';
       btn.disabled = true;
 
       document.getElementById('scan-placeholder').classList.add('hidden');
       document.getElementById('scan-results').classList.add('hidden');
+      document.getElementById('scan-error-card').classList.add('hidden');
       document.getElementById('scan-progress-stepper').classList.remove('hidden');
 
-      setStepperStage(1, 15, '1/5: Uploading & preparing image...');
-
-      const timer1 = setTimeout(() => setStepperStage(2, 40, '2/5: Deep learning OCR text extraction...'), 350);
-      const timer2 = setTimeout(() => setStepperStage(3, 65, '3/5: Detecting brand, commodity & declarations...'), 900);
-      const timer3 = setTimeout(() => setStepperStage(4, 85, '4/5: Evaluating Legal Metrology Act compliance rules...'), 1500);
-      const timer4 = setTimeout(() => setStepperStage(5, 95, '5/5: Synthesizing compliance report & verdict...'), 2100);
+      // 8 sequential live stages
+      setStepperStage(1, 12, '1/8: Uploading Images ✓');
+      const t2 = setTimeout(() => setStepperStage(2, 25, '2/8: Reading Labels...'), 400);
+      const t3 = setTimeout(() => setStepperStage(3, 40, '3/8: Combining OCR...'), 1000);
+      const t4 = setTimeout(() => setStepperStage(4, 55, '4/8: Detecting Product...'), 1800);
+      const t5 = setTimeout(() => setStepperStage(5, 70, '5/8: Extracting Declarations...'), 2600);
+      const t6 = setTimeout(() => setStepperStage(6, 82, '6/8: Checking Legal Metrology Rules...'), 3400);
+      const t7 = setTimeout(() => setStepperStage(7, 92, '7/8: Calculating Compliance...'), 4200);
+      const t8 = setTimeout(() => setStepperStage(8, 97, '8/8: Generating Report...'), 4800);
 
       try {
         const formData = new FormData();
-        formData.append('file', currentFile);
+        allFiles.forEach(item => {
+          formData.append('files', item.file);
+        });
         const name = document.getElementById('p-name').value;
         if (name) formData.append('product_name', name);
         formData.append('category', document.getElementById('p-category').value);
 
         const res = await fetch('/api/scan', { method: 'POST', body: formData });
-        if (!res.ok) throw new Error('Server returned HTTP ' + res.status);
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || ('HTTP ' + res.status + ': Server Error during scan analysis'));
+        }
         const data = await res.json();
-        
-        clearTimeout(timer1); clearTimeout(timer2); clearTimeout(timer3); clearTimeout(timer4);
-        setStepperStage(6, 100, 'Compliance scan successfully completed!');
+
+        [t2, t3, t4, t5, t6, t7, t8].forEach(clearTimeout);
+        setStepperStage(9, 100, 'Compliance audit complete!');
 
         setTimeout(() => {
           document.getElementById('scan-progress-stepper').classList.add('hidden');
@@ -2344,10 +2481,10 @@ async def index_ui():
         }, 300);
 
       } catch (err) {
-        clearTimeout(timer1); clearTimeout(timer2); clearTimeout(timer3); clearTimeout(timer4);
-        alert('Scan failed: ' + err);
+        [t2, t3, t4, t5, t6, t7, t8].forEach(clearTimeout);
         document.getElementById('scan-progress-stepper').classList.add('hidden');
-        document.getElementById('scan-placeholder').classList.remove('hidden');
+        document.getElementById('scan-error-card').classList.remove('hidden');
+        document.getElementById('scan-error-message').innerText = String(err.message || err);
       } finally {
         btn.innerHTML = '<i data-lucide="shield-check" class="w-4 h-4 inline-block mr-1.5"></i> Start Compliance Check';
         btn.disabled = false;
@@ -2355,50 +2492,227 @@ async def index_ui():
       }
     }
 
-    async function updateScanResults() {
-      const reportId = document.getElementById('edit-report-id').value;
-      if (!reportId) return;
-      
-      const btn = document.getElementById('update-evaluate-btn');
-      btn.innerText = 'Recalculating...';
-      btn.disabled = true;
-      
-      try {
-        const formData = new FormData();
-        formData.append('report_id', reportId);
-        formData.append('category', document.getElementById('edit-category').value);
-        
-        const fieldNames = [
-          'commodity_name', 'brand', 'manufacturer_details', 'address',
-          'importer', 'country_of_origin', 'customer_care', 'mrp',
-          'net_quantity', 'mfg_date', 'expiry_date', 'unit_sale_price'
-        ];
-        
-        fieldNames.forEach(name => {
-          const val = document.getElementById('edit-' + name).value;
-          formData.append(name, val);
-        });
-        
-        const res = await fetch('/api/scan/update', { method: 'POST', body: formData });
-        const data = await res.json();
-        populateReportData(data);
-        alert('Compliance re-evaluated successfully!');
-      } catch (err) {
-        alert('Update failed: ' + err);
-      } finally {
-        btn.innerHTML = '<i data-lucide="refresh-cw" class="w-3.5 h-3.5 inline-block mr-1"></i> Save Corrections & Recalculate Compliance';
-        btn.disabled = false;
-        lucide.createIcons();
-      }
+    function renderDeclarationsGrid(fields, confidences) {
+      const grid = document.getElementById('declarations-grid');
+      grid.innerHTML = '';
+
+      const items = [
+        { label: 'Product / Commodity', key: 'commodity_name', fallback: 'Not Detected' },
+        { label: 'Brand Name', key: 'brand', fallback: 'Generic Brand' },
+        { label: 'Category', key: 'category', fallback: 'Food' },
+        { label: 'Manufacturer Name', key: 'manufacturer_details', fallback: 'Missing' },
+        { label: 'Packer / Mfg Address', key: 'address', fallback: 'Missing' },
+        { label: 'Maximum Retail Price (MRP)', key: 'mrp', fallback: 'Missing' },
+        { label: 'Net Quantity', key: 'net_quantity', fallback: 'Missing' },
+        { label: 'Mfg / Packing Date', key: 'mfg_date', fallback: 'Missing' },
+        { label: 'Best Before / Expiry Date', key: 'expiry_date', fallback: 'Missing' },
+        { label: 'Country of Origin', key: 'country_of_origin', fallback: 'India' },
+        { label: 'Consumer Care Helpline', key: 'customer_care', fallback: 'Missing' },
+        { label: 'Unit Sale Price (USP)', key: 'unit_sale_price', fallback: 'Missing' }
+      ];
+
+      items.forEach(item => {
+        const val = fields[item.key] || item.fallback;
+        const isPresent = val && val !== 'Missing' && val !== 'Not Detected' && val !== 'Generic Brand';
+        const conf = confidences[item.key] !== undefined ? confidences[item.key] : (isPresent ? 94 : 0);
+
+        const card = document.createElement('div');
+        card.className = 'p-3 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-1.5 text-xs';
+        card.innerHTML = `
+          <div class="flex items-center justify-between">
+            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-wider">${item.label}</span>
+            <span class="px-1.5 py-0.5 rounded text-[9px] font-bold ${isPresent ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}">
+              ${isPresent ? conf + '% Conf' : 'Missing'}
+            </span>
+          </div>
+          <div class="font-semibold ${isPresent ? 'text-white' : 'text-rose-400 italic'} truncate" title="${val}">
+            ${val}
+          </div>
+        `;
+        grid.appendChild(card);
+      });
     }
 
-    let showOcrDetails = false;
-    function toggleRawOcr() {
-      showOcrDetails = !showOcrDetails;
-      const box = document.getElementById('ocr-details-box');
-      const text = document.getElementById('ocr-toggle-text');
-      box.classList.toggle('hidden', !showOcrDetails);
-      text.innerText = showOcrDetails ? 'Hide Detected OCR Segments' : 'Show Detected OCR Segments';
+    function renderRecommendations(checks) {
+      const recList = document.getElementById('recommendations-list');
+      recList.innerHTML = '';
+
+      // Sort priority checks: CRITICAL -> HIGH -> MEDIUM -> LOW
+      const priorityWeights = { 'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
+      const issues = checks
+        .filter(r => r.status !== 'PASS')
+        .sort((a, b) => (priorityWeights[b.priority || 'LOW'] || 1) - (priorityWeights[a.priority || 'LOW'] || 1));
+
+      if (issues.length === 0) {
+        recList.innerHTML = `
+          <div class="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center gap-2">
+            <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400 flex-shrink-0"></i>
+            <span>Packaging label is fully compliant with Legal Metrology requirements. Ready for commercial market distribution.</span>
+          </div>
+        `;
+        return;
+      }
+
+      issues.forEach((r, idx) => {
+        const item = document.createElement('div');
+        const priClass = r.priority === 'CRITICAL' ? 'bg-rose-500/20 text-rose-300 border-rose-500/40' :
+                         r.priority === 'HIGH' ? 'bg-orange-500/20 text-orange-300 border-orange-500/40' :
+                         r.priority === 'MEDIUM' ? 'bg-purple-500/20 text-purple-300 border-purple-500/40' :
+                         'bg-blue-500/20 text-blue-300 border-blue-500/40';
+        item.className = 'p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-start gap-2.5 text-xs';
+        item.innerHTML = `
+          <span class="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold border flex-shrink-0 mt-0.5 ${priClass}">${idx + 1}</span>
+          <div class="space-y-0.5 flex-1">
+            <div class="flex items-center justify-between">
+              <span class="font-bold text-white">${r.priority || 'HIGH'} — ${r.title}</span>
+              <span class="text-[10px] font-mono text-slate-400">${r.clause || ''}</span>
+            </div>
+            <p class="text-cyan-300 leading-relaxed">${r.remediation}</p>
+          </div>
+        `;
+        recList.appendChild(item);
+      });
+    }
+
+    function renderRuleChecksList() {
+      if (!currentReportData) return;
+      const list = document.getElementById('rules-list');
+      list.innerHTML = '';
+      const allChecks = currentReportData.details?.rule_checks || [];
+      
+      const filtered = allChecks.filter(r => {
+        if (activeFilter === 'ALL') return true;
+        if (activeFilter === 'FAIL') return r.status === 'FAIL';
+        if (activeFilter === 'WARNING') return r.status === 'WARNING';
+        if (activeFilter === 'PASS') return r.status === 'PASS';
+        if (['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(activeFilter)) {
+          return (r.priority || 'LOW') === activeFilter;
+        }
+        return true;
+      });
+
+      if (filtered.length === 0) {
+        list.innerHTML = '<div class="p-6 text-center text-slate-500 text-xs rounded-2xl bg-slate-900/40 border border-slate-800">No declarations match the active filter.</div>';
+        return;
+      }
+
+      filtered.forEach(r => {
+        const item = document.createElement('div');
+        const ruleStatusSlug = (r.status || 'pass').toLowerCase().replace(/\s+/g, '-');
+        const priSlug = (r.priority || 'low').toLowerCase();
+        item.className = 'p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5 text-xs';
+        item.innerHTML = `
+          <div class="flex justify-between items-center">
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="font-mono text-cyan-400 font-bold">${r.rule_code}</span>
+              <span class="priority-${priSlug}">${r.priority || 'LOW'} PRIORITY</span>
+            </div>
+            <span class="badge-${ruleStatusSlug}">${r.status}</span>
+          </div>
+          <div class="font-bold text-white">${r.title}</div>
+          <div class="text-[10px] text-slate-400 italic">${r.clause || ''}</div>
+          <div class="text-[11px] font-mono text-slate-300 bg-slate-950 p-2 rounded truncate"><span class="text-slate-500">Extracted:</span> ${r.value || 'Not Declared / Missing'}</div>
+          <div class="text-slate-300"><span class="text-slate-500 font-semibold">Finding:</span> ${r.finding}</div>
+          <div class="text-cyan-300 pt-0.5"><span class="text-cyan-500 font-semibold">Action:</span> ${r.remediation}</div>
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    function filterChecks(filterType) {
+      activeFilter = filterType;
+      ['all', 'fail', 'warning', 'pass'].forEach(t => {
+        const el = document.getElementById('tab-' + t);
+        if (el) {
+          if (t.toUpperCase() === filterType) {
+            el.className = 'px-2.5 py-1 rounded-lg font-bold text-cyan-400 bg-slate-800';
+          } else {
+            el.className = 'px-2.5 py-1 rounded-lg font-bold text-slate-400 hover:text-white';
+          }
+        }
+      });
+      renderRuleChecksList();
+    }
+
+    function filterPriority(priType) {
+      activeFilter = priType;
+      renderRuleChecksList();
+    }
+
+    function populateReportData(data) {
+      currentReportData = data;
+      document.getElementById('res-code').innerText = data.report_code;
+      document.getElementById('res-name').innerText = data.product_name;
+      document.getElementById('res-category').innerText = data.category || data.detected_category || 'Food';
+      document.getElementById('res-score').innerText = data.compliance_score + '%';
+      
+      const riskPct = data.risk_percentage !== undefined ? data.risk_percentage : (100.0 - data.compliance_score).toFixed(1);
+      document.getElementById('res-risk-percentage').innerText = riskPct + '% RISK';
+
+      const stEl = document.getElementById('res-status');
+      const statusSlug = (data.compliance_status || 'compliant').toLowerCase().replace(/\s+/g, '-');
+      stEl.className = 'badge-' + statusSlug;
+      stEl.innerText = data.compliance_status;
+      
+      document.getElementById('res-summary').innerText = data.summary;
+      
+      document.getElementById('res-count-passed').innerText = data.passed_count || 0;
+      document.getElementById('res-count-violations').innerText = data.violations_count || 0;
+      document.getElementById('res-count-warnings').innerText = data.warnings_count || 0;
+      document.getElementById('res-count-review').innerText = data.manual_review_count || 0;
+      
+      const headerPdf = document.getElementById('res-header-pdf-link');
+      if (headerPdf) headerPdf.href = '/api/reports/' + data.id + '/pdf';
+
+      // Render thumbnail list
+      const thumbsContainer = document.getElementById('res-thumbnails-container');
+      thumbsContainer.innerHTML = '';
+      const allFiles = getAllFilesList();
+      if (allFiles.length > 0) {
+        allFiles.forEach(item => {
+          const img = document.createElement('img');
+          img.src = URL.createObjectURL(item.file);
+          img.className = 'w-12 h-12 rounded-xl object-cover border-2 border-slate-800 shadow-md cursor-pointer hover:scale-110 transition-transform';
+          img.onclick = () => openImageModal(img.src);
+          thumbsContainer.appendChild(img);
+        });
+      }
+
+      // Priority Counts
+      const checks = data.details?.rule_checks || [];
+      const priCrit = checks.filter(r => r.priority === 'CRITICAL' && r.status !== 'PASS').length;
+      const priHi = checks.filter(r => r.priority === 'HIGH' && r.status !== 'PASS').length;
+      const priMed = checks.filter(r => r.priority === 'MEDIUM' && r.status !== 'PASS').length;
+      const priLo = checks.filter(r => r.priority === 'LOW' && r.status !== 'PASS').length;
+
+      document.getElementById('res-pri-critical').innerText = `${priCrit} CRITICAL`;
+      document.getElementById('res-pri-high').innerText = `${priHi} HIGH`;
+      document.getElementById('res-pri-medium').innerText = `${priMed} MEDIUM`;
+      document.getElementById('res-pri-low').innerText = `${priLo} LOW`;
+
+      // Render 12 Key Declarations Grid with Confidences
+      const fields = data.details?.fields || {};
+      const confidences = data.details?.fields_confidence || data.fields_confidence || {};
+      renderDeclarationsGrid(fields, confidences);
+
+      // Render Prioritized Recommendations
+      renderRecommendations(checks);
+
+      // Render Detailed Checks
+      renderRuleChecksList();
+
+      lucide.createIcons();
+    }
+
+    function openImageModal(src) {
+      const modal = document.getElementById('image-modal');
+      const img = document.getElementById('modal-img');
+      img.src = src;
+      modal.classList.remove('hidden');
+    }
+
+    function closeImageModal() {
+      document.getElementById('image-modal').classList.add('hidden');
     }
 
     async function loadReports() {

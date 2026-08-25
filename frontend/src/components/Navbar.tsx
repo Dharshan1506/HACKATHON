@@ -24,9 +24,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
                 <span className="font-extrabold text-xl tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-300">
                   PackSure <span className="text-cyan-400 font-black">AI</span>
                 </span>
-                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                  LM Rules 2011
-                </span>
               </div>
               <p className="text-[11px] text-slate-400 -mt-0.5 hidden sm:block">
                 Legal Metrology Compliance Checker

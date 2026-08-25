@@ -23,12 +23,16 @@ export interface BoundingBox {
 
 export interface ExtractedPayload {
   fields: Record<string, string>;
+  fields_confidence?: Record<string, number>;
   category?: string;
   detected_category?: string;
   raw_text: string;
   bounding_boxes: BoundingBox[];
   rule_checks: MandatoryRuleCheck[];
   summary: string;
+  risk_percentage?: number;
+  image_urls?: string[];
+  image_filenames?: string[];
   action_items?: string[];
   manual_review_count?: number;
   critical_violations_count?: number;
@@ -54,10 +58,12 @@ export interface ComplianceReport {
   compliance_tier?: string;
   tier?: string;
   risk_level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  risk_percentage?: number;
   violations_count: number;
   warnings_count: number;
   passed_count: number;
   manual_review_count?: number;
+  fields_confidence?: Record<string, number>;
   critical_violations_count?: number;
   high_violations_count?: number;
   medium_violations_count?: number;
@@ -70,6 +76,7 @@ export interface ComplianceReport {
   summary: string;
   details?: ExtractedPayload;
   image_url?: string;
+  image_urls?: string[];
 }
 
 export interface RuleReference {

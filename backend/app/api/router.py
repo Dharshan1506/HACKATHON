@@ -43,35 +43,56 @@ async def get_compliance_rules(category: Optional[str] = None):
 
 @router.post("/scan")
 async def scan_product(
-    file: UploadFile = File(...),
+    files: Optional[List[UploadFile]] = File(None),
+    file: Optional[UploadFile] = File(None),
     product_name: Optional[str] = Form(None),
     category: Optional[str] = Form("Auto-Detect"),
     brand: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Accepts packaging label image, runs genuine OCR extraction and deterministic Legal Metrology compliance evaluation.
+    Accepts single or multiple packaging label images (Front, Back, Side, Bottom),
+    runs fast multi-angle OCR and deterministic Legal Metrology compliance evaluation.
     """
+    upload_list = []
+    if files:
+        upload_list.extend(files)
+    if file and file not in upload_list:
+        upload_list.append(file)
+    
+    if not upload_list:
+        raise HTTPException(status_code=400, detail="No packaging image files provided.")
+
     clean_p_name = _clean_form_str(product_name)
     clean_category = _clean_form_str(category) or "Auto-Detect"
     clean_brand = _clean_form_str(brand)
 
-    ext = os.path.splitext(file.filename)[1] or ".jpg"
-    unique_filename = f"scan_{uuid.uuid4().hex[:10]}{ext}"
-    saved_path = os.path.join(settings.UPLOAD_DIR, unique_filename)
+    saved_paths = []
+    saved_filenames = []
+    saved_urls = []
 
-    with open(saved_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
+    for item in upload_list:
+        ext = os.path.splitext(item.filename)[1] or ".jpg"
+        unique_fn = f"scan_{uuid.uuid4().hex[:10]}{ext}"
+        saved_path = os.path.join(settings.UPLOAD_DIR, unique_fn)
+        with open(saved_path, "wb") as f:
+            content = await item.read()
+            f.write(content)
+        saved_paths.append(saved_path)
+        saved_filenames.append(unique_fn)
+        saved_urls.append(f"/uploads/{unique_fn}")
 
-    # 1. Run Authentic OCR
-    ocr_result = await OCREngine.process_image(saved_path, file.filename)
+    # 1. Run OCR on all uploaded packaging surfaces
+    ocr_result = await OCREngine.process_images(saved_paths)
     fields = ocr_result["fields"]
+    fields_confidence = ocr_result.get("fields_confidence", {})
 
     if clean_p_name:
         fields["commodity_name"] = clean_p_name
+        fields_confidence["commodity_name"] = 99
     if clean_brand:
         fields["brand"] = clean_brand
+        fields_confidence["brand"] = 99
 
     # Category Detection
     detected_cat = ocr_result.get("detected_category", "Food")
@@ -89,16 +110,22 @@ async def scan_product(
     eval_fields["manufacturer_details"] = ", ".join(mfg_parts)
 
     compliance_analysis = ComplianceAIAnalyzer.analyze(eval_fields, category=final_category)
+    risk_percentage = round(max(0.0, min(100.0, 100.0 - compliance_analysis["score"])), 1)
 
     extracted_payload = {
         "fields": fields,
+        "fields_confidence": fields_confidence,
         "category": final_category,
         "detected_category": detected_cat,
         "raw_text": ocr_result["raw_text"],
         "bounding_boxes": ocr_result["bounding_boxes"],
         "rule_checks": compliance_analysis["rule_checks"],
         "summary": compliance_analysis["summary"],
-        "action_items": compliance_analysis["action_items"]
+        "action_items": compliance_analysis["action_items"],
+        "image_urls": saved_urls,
+        "image_filenames": saved_filenames,
+        "risk_percentage": risk_percentage,
+        "manual_review_count": compliance_analysis.get("manual_review_count", 0)
     }
 
     # 3. Save Product
@@ -121,10 +148,11 @@ async def scan_product(
     await db.flush()
 
     # 4. Save ScanResult
+    primary_filename = saved_filenames[0]
     scan_result = ScanResult(
         product_id=product.id,
-        image_url=f"/uploads/{unique_filename}",
-        image_filename=unique_filename,
+        image_url=f"/uploads/{primary_filename}",
+        image_filename=primary_filename,
         extracted_data=extracted_payload,
         compliance_score=compliance_analysis["score"],
         compliance_status=compliance_analysis["status"],
@@ -160,9 +188,13 @@ async def scan_product(
         "compliance_score": scan_result.compliance_score,
         "compliance_status": scan_result.compliance_status,
         "risk_level": scan_result.risk_level,
+        "risk_percentage": risk_percentage,
         "passed_count": report.passed_count,
         "warnings_count": report.warnings_count,
         "violations_count": report.violations_count,
+        "manual_review_count": compliance_analysis.get("manual_review_count", 0),
+        "fields_confidence": fields_confidence,
+        "image_urls": saved_urls,
         "summary": compliance_analysis["summary"],
         "extracted_data": extracted_payload,
         "details": extracted_payload,

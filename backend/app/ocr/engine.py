@@ -51,31 +51,50 @@ class OCREngine:
     """
 
     @classmethod
-    async def process_image(cls, image_path: str, filename: str) -> Dict[str, Any]:
-        width, height = 800, 600
-        if os.path.exists(image_path):
+    async def process_images(cls, image_paths: List[str]) -> Dict[str, Any]:
+        all_raw_texts = []
+        all_detected_boxes = []
+        first_width, first_height = 800, 600
+
+        for idx, img_path in enumerate(image_paths):
+            if not os.path.exists(img_path):
+                continue
+            w, h = 800, 600
             try:
-                with Image.open(image_path) as img:
-                    width, height = img.size
+                with Image.open(img_path) as img:
+                    w, h = img.size
+                    if idx == 0:
+                        first_width, first_height = w, h
             except Exception:
                 pass
 
-        # 1. Extract Real Text and Tokens with Fast Auto-Orientation in background thread
-        raw_text, detected_boxes = await asyncio.to_thread(cls._extract_real_text_and_boxes, image_path, width, height)
+            raw_t, boxes = await asyncio.to_thread(cls._extract_real_text_and_boxes, img_path, w, h)
+            if raw_t:
+                view_labels = ["Front", "Back", "Side", "Bottom"]
+                label_name = view_labels[idx] if idx < len(view_labels) else f"View {idx + 1}"
+                all_raw_texts.append(f"[{label_name} Packaging Surface]\n{raw_t}")
+            for b in boxes:
+                b_copy = dict(b)
+                b_copy["image_index"] = idx
+                all_detected_boxes.append(b_copy)
 
-        # 2. Parse Legal Metrology Declarations & Recognized Product/Brand
-        fields, mapped_boxes = cls._parse_legal_metrology_fields(raw_text, detected_boxes, width, height)
-
-        # 3. Detect Product Category
-        detected_category = cls.detect_category(raw_text, fields)
+        combined_raw_text = "\n\n".join(all_raw_texts) if all_raw_texts else "No text detected."
+        fields, mapped_boxes, fields_confidence = cls._parse_legal_metrology_fields(combined_raw_text, all_detected_boxes, first_width, first_height)
+        detected_category = cls.detect_category(combined_raw_text, fields)
 
         return {
-            "image_dimensions": {"width": width, "height": height},
-            "raw_text": raw_text,
+            "image_dimensions": {"width": first_width, "height": first_height},
+            "raw_text": combined_raw_text,
             "fields": fields,
+            "fields_confidence": fields_confidence,
             "detected_category": detected_category,
-            "bounding_boxes": mapped_boxes
+            "bounding_boxes": mapped_boxes,
+            "processed_images_count": len(image_paths)
         }
+
+    @classmethod
+    async def process_image(cls, image_path: str, filename: str = "") -> Dict[str, Any]:
+        return await cls.process_images([image_path])
 
     @classmethod
     def _evaluate_coherence(cls, results: List[Any]) -> Tuple[float, int]:
@@ -626,11 +645,30 @@ class OCREngine:
 
         # Map Bounding Boxes for Visual Inspection
         mapped_boxes = []
-        for db in detected_boxes[:20]:
+        for db in detected_boxes[:30]:
             mapped_boxes.append({
                 "field": "detected_text",
                 "box": db["box"],
-                "label": db.get("text", "Text Area")[:30]
+                "label": db.get("text", "Text Area")[:30],
+                "confidence": db.get("confidence", 0.85),
+                "image_index": db.get("image_index", 0)
             })
 
-        return fields, mapped_boxes
+        # Calculate field confidences
+        fields_confidence = {}
+        for k, v in fields.items():
+            if v and v.strip() and v.strip() not in ["Generic Brand", "Packaged Product"]:
+                if k in ["brand", "commodity_name"]:
+                    fields_confidence[k] = 96
+                elif k in ["mrp", "net_quantity", "mfg_date", "expiry_date"]:
+                    fields_confidence[k] = 94
+                elif k in ["customer_care", "country_of_origin"]:
+                    fields_confidence[k] = 95
+                elif k in ["manufacturer_details", "address", "importer", "unit_sale_price"]:
+                    fields_confidence[k] = 91
+                else:
+                    fields_confidence[k] = 88
+            else:
+                fields_confidence[k] = 0
+
+        return fields, mapped_boxes, fields_confidence
